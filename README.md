@@ -8,7 +8,8 @@ The system processes financial transactions through an event-driven pipeline tha
 
 # Architecture Overview
 
-<img width="518" height="764" alt="Ekran Resmi 2026-04-07 22 55 39" src="https://github.com/user-attachments/assets/577350cb-ac59-4d37-8f0e-5210518f2966" />
+<img width="514" height="763" alt="Ekran Resmi 2026-04-07 22 56 47" src="https://github.com/user-attachments/assets/fce92903-4ea0-4778-871d-c69f88955678" />
+
 
 
 
