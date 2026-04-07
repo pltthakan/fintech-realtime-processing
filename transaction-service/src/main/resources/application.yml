@@ -1,0 +1,78 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: transaction-service
+
+  # ============================================
+  # POSTGRESQL
+  # ============================================
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5433}/${POSTGRES_DB:fintech_db}?currentSchema=transaction_service
+    username: ${POSTGRES_USER:fintech_user}
+    password: ${POSTGRES_PASSWORD:fintech_secret_2026}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 15
+      minimum-idle: 5
+      connection-timeout: 20000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        default_schema: transaction_service
+        format_sql: true
+
+  # ============================================
+  # KAFKA
+  # ============================================
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+  # ============================================
+  # REDIS
+  # ============================================
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:redis_secret_2026}
+      database: 4
+
+# ============================================
+# EUREKA CLIENT
+# ============================================
+eureka:
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.value}
+  client:
+    service-url:
+      defaultZone: http://${EUREKA_USER:eureka}:${EUREKA_PASSWORD:eureka_secret_2026}@${EUREKA_HOST:localhost}:${EUREKA_PORT:8761}/eureka/
+    fetch-registry: true
+    register-with-eureka: true
+
+# ============================================
+# ACTUATOR
+# ============================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+# ============================================
+# LOGGING
+# ============================================
+logging:
+  level:
+    root: INFO
+    com.fintech.transaction: DEBUG
+    org.apache.kafka: WARN

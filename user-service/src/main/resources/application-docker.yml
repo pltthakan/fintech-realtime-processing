@@ -1,0 +1,14 @@
+# Docker ortamı için override
+spring:
+  datasource:
+    url: jdbc:postgresql://postgresql:5432/fintech_db?currentSchema=user_service
+
+eureka:
+  instance:
+    hostname: user-service
+    prefer-ip-address: true
+
+logging:
+  level:
+    root: INFO
+    com.fintech.user: INFO

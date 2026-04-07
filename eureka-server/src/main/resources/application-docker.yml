@@ -1,0 +1,12 @@
+# Docker ortamı için override
+eureka:
+  instance:
+    hostname: eureka-server
+    prefer-ip-address: true
+  server:
+    enable-self-preservation: true
+    eviction-interval-timer-in-ms: 10000
+
+logging:
+  level:
+    root: INFO

@@ -1,0 +1,56 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: notification-service
+
+  # ============================================
+  # KAFKA
+  # ============================================
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+  # ============================================
+  # RABBITMQ
+  # ============================================
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:fintech_rabbit}
+    password: ${RABBITMQ_PASSWORD:rabbit_secret_2026}
+    virtual-host: ${RABBITMQ_VHOST:fintech_vhost}
+
+# ============================================
+# EUREKA CLIENT
+# ============================================
+eureka:
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.value}
+  client:
+    service-url:
+      defaultZone: http://${EUREKA_USER:eureka}:${EUREKA_PASSWORD:eureka_secret_2026}@${EUREKA_HOST:localhost}:${EUREKA_PORT:8761}/eureka/
+    fetch-registry: true
+    register-with-eureka: true
+
+# ============================================
+# ACTUATOR
+# ============================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+# ============================================
+# LOGGING
+# ============================================
+logging:
+  level:
+    root: INFO
+    com.fintech.notification: DEBUG
+    org.apache.kafka: WARN

@@ -1,0 +1,66 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: reporting-service
+
+  # ============================================
+  # MONGODB (tamamlanmış işlemler)
+  # ============================================
+  data:
+    mongodb:
+      uri: mongodb://${MONGO_USER:fintech_mongo}:${MONGO_PASSWORD:mongo_secret_2026}@${MONGO_HOST:localhost}:${MONGO_PORT:27017}/${MONGO_DB:fintech_transactions}?authSource=admin
+
+  # ============================================
+  # POSTGRESQL (cross-service read-only queries)
+  # ============================================
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5433}/${POSTGRES_DB:fintech_db}
+    username: ${POSTGRES_USER:fintech_user}
+    password: ${POSTGRES_PASSWORD:fintech_secret_2026}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+
+  # MongoDB ve JPA çakışma önleme
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+
+# ============================================
+# EUREKA CLIENT
+# ============================================
+eureka:
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.value}
+  client:
+    service-url:
+      defaultZone: http://${EUREKA_USER:eureka}:${EUREKA_PASSWORD:eureka_secret_2026}@${EUREKA_HOST:localhost}:${EUREKA_PORT:8761}/eureka/
+    fetch-registry: true
+    register-with-eureka: true
+
+# ============================================
+# ACTUATOR
+# ============================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+# ============================================
+# LOGGING
+# ============================================
+logging:
+  level:
+    root: INFO
+    com.fintech.reporting: DEBUG

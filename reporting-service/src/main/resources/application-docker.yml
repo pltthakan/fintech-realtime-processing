@@ -1,0 +1,14 @@
+spring:
+  data:
+    mongodb:
+      uri: mongodb://fintech_mongo:mongo_secret_2026@mongodb:27017/fintech_transactions?authSource=admin
+
+eureka:
+  instance:
+    hostname: reporting-service
+    prefer-ip-address: true
+
+logging:
+  level:
+    root: INFO
+    com.fintech.reporting: INFO

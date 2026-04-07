@@ -1,0 +1,183 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+
+  # ============================================
+  # REDIS (Rate Limiting için)
+  # ============================================
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:redis_secret_2026}
+      database: 1
+
+  # ============================================
+  # GATEWAY ROUTE TANIMLARI
+  # ============================================
+  cloud:
+    gateway:
+      # Eureka üzerinden otomatik route oluşturma (kapalı - manuel tanımlıyoruz)
+      discovery:
+        locator:
+          enabled: false
+
+      # Varsayılan filtreler (tüm route'lara uygulanır)
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_UNIQUE
+
+      routes:
+        # ────────────────────────────────────────
+        # USER SERVICE (:8081)
+        # Auth endpoint'leri (açık)
+        # ────────────────────────────────────────
+        - id: user-service-auth
+          uri: lb://user-service
+          predicates:
+            - Path=/api/v1/auth/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                redis-rate-limiter.requestedTokens: 1
+
+        # User yönetimi (korumalı)
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/api/v1/users/**
+          filters:
+            - name: AuthenticationFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                redis-rate-limiter.requestedTokens: 1
+
+        # ────────────────────────────────────────
+        # ACCOUNT SERVICE (:8082)
+        # ────────────────────────────────────────
+        - id: account-service
+          uri: lb://account-service
+          predicates:
+            - Path=/api/v1/accounts/**
+          filters:
+            - name: AuthenticationFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 30
+                redis-rate-limiter.burstCapacity: 60
+                redis-rate-limiter.requestedTokens: 1
+
+        # ────────────────────────────────────────
+        # TRANSACTION SERVICE (:8083)
+        # ────────────────────────────────────────
+        - id: transaction-service
+          uri: lb://transaction-service
+          predicates:
+            - Path=/api/v1/transactions/**
+          filters:
+            - name: AuthenticationFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 100
+                redis-rate-limiter.requestedTokens: 1
+
+        # ────────────────────────────────────────
+        # FRAUD DETECTION SERVICE (:8084)
+        # (Sadece ADMIN ve ANALYST erişebilir)
+        # ────────────────────────────────────────
+        - id: fraud-service
+          uri: lb://fraud-detection-service
+          predicates:
+            - Path=/api/v1/fraud/**
+          filters:
+            - name: AuthenticationFilter
+              args:
+                requiredRoles: ADMIN,ANALYST
+
+        # ────────────────────────────────────────
+        # NOTIFICATION SERVICE (:8085)
+        # ────────────────────────────────────────
+        - id: notification-service
+          uri: lb://notification-service
+          predicates:
+            - Path=/api/v1/notifications/**
+          filters:
+            - name: AuthenticationFilter
+
+        # ────────────────────────────────────────
+        # REPORTING SERVICE (:8086)
+        # ────────────────────────────────────────
+        - id: reporting-service
+          uri: lb://reporting-service
+          predicates:
+            - Path=/api/v1/reports/**
+          filters:
+            - name: AuthenticationFilter
+              args:
+                requiredRoles: ADMIN,ANALYST
+
+# ============================================
+# EUREKA CLIENT
+# ============================================
+eureka:
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.value}
+  client:
+    service-url:
+      defaultZone: http://${EUREKA_USER:eureka}:${EUREKA_PASSWORD:eureka_secret_2026}@${EUREKA_HOST:localhost}:${EUREKA_PORT:8761}/eureka/
+    fetch-registry: true
+    register-with-eureka: true
+
+# ============================================
+# JWT
+# ============================================
+jwt:
+  secret: ${JWT_SECRET:fintech-jwt-secret-key-2026-very-long-and-secure}
+
+# ============================================
+# RESILIENCE4J (Circuit Breaker)
+# ============================================
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: 5s
+
+# ============================================
+# ACTUATOR
+# ============================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway,metrics
+  endpoint:
+    gateway:
+      enabled: true
+    health:
+      show-details: always
+
+# ============================================
+# LOGGING
+# ============================================
+logging:
+  level:
+    root: INFO
+    com.fintech.gateway: DEBUG
+    org.springframework.cloud.gateway: INFO

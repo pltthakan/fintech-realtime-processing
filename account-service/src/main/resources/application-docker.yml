@@ -1,0 +1,15 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://postgresql:5432/fintech_db?currentSchema=account_service
+  kafka:
+    bootstrap-servers: kafka:29092
+
+eureka:
+  instance:
+    hostname: account-service
+    prefer-ip-address: true
+
+logging:
+  level:
+    root: INFO
+    com.fintech.account: INFO

@@ -1,0 +1,16 @@
+# Docker ortamı için override
+spring:
+  datasource:
+    url: jdbc:postgresql://postgresql:5432/fintech_db?currentSchema=fraud_service
+  kafka:
+    bootstrap-servers: kafka:29092
+
+eureka:
+  instance:
+    hostname: fraud-detection-service
+    prefer-ip-address: true
+
+logging:
+  level:
+    root: INFO
+    com.fintech.fraud: INFO

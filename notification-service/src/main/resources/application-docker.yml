@@ -1,0 +1,15 @@
+spring:
+  kafka:
+    bootstrap-servers: kafka:29092
+  rabbitmq:
+    host: rabbitmq
+
+eureka:
+  instance:
+    hostname: notification-service
+    prefer-ip-address: true
+
+logging:
+  level:
+    root: INFO
+    com.fintech.notification: INFO
