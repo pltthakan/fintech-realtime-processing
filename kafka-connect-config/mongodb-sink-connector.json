@@ -1,0 +1,39 @@
+{
+  "name": "mongodb-sink-completed-transactions",
+  "config": {
+    "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",
+    "tasks.max": "1",
+
+    "topics": "transaction-completed",
+
+    "connection.uri": "mongodb://fintech_mongo:mongo_secret_2026@mongodb:27017",
+    "database": "fintech_transactions",
+    "collection": "completed_transactions",
+
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": false,
+
+    "document.id.strategy": "com.mongodb.kafka.connect.sink.processor.id.strategy.ProvidedInValueStrategy",
+    "document.id.strategy.overwrite.existing": false,
+
+    "writemodel.strategy": "com.mongodb.kafka.connect.sink.writemodel.strategy.InsertOneDefaultStrategy",
+
+    "max.batch.size": "100",
+    "rate.limiting.timeout": "0",
+    "rate.limiting.every.n": "0",
+
+    "errors.tolerance": "all",
+    "errors.deadletterqueue.topic.name": "transaction-dlq",
+    "errors.deadletterqueue.topic.replication.factor": 1,
+    "errors.deadletterqueue.context.headers.enable": true,
+    "errors.log.enable": true,
+    "errors.log.include.messages": true,
+
+    "post.processor.chain": "com.mongodb.kafka.connect.sink.processor.DocumentIdAdder",
+
+    "transforms": "InsertTimestamp",
+    "transforms.InsertTimestamp.type": "org.apache.kafka.connect.transforms.InsertField$Value",
+    "transforms.InsertTimestamp.timestamp.field": "kafkaIngestTimestamp"
+  }
+}

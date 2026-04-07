@@ -1,0 +1,62 @@
+server:
+  port: 8761
+
+spring:
+  application:
+    name: eureka-server
+  security:
+    user:
+      name: ${EUREKA_USER:eureka}
+      password: ${EUREKA_PASSWORD:eureka_secret_2026}
+
+# ============================================
+# EUREKA SERVER CONFIGURATION
+# ============================================
+eureka:
+  instance:
+    hostname: localhost
+    prefer-ip-address: true
+  client:
+    # Kendisini kaydetmesin (tek instance)
+    register-with-eureka: false
+    # Başka Eureka'dan registry çekmesin
+    fetch-registry: false
+    service-url:
+      defaultZone: http://${spring.security.user.name}:${spring.security.user.password}@${eureka.instance.hostname}:${server.port}/eureka/
+  server:
+    # Self-preservation kapalı (development için)
+    enable-self-preservation: false
+    # Süresi dolan instance'ları temizleme aralığı (ms)
+    eviction-interval-timer-in-ms: 5000
+    # Response cache güncelleme aralığı (ms)
+    response-cache-update-interval-ms: 5000
+
+# ============================================
+# ACTUATOR
+# ============================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: Fintech Eureka Server
+    description: Service Discovery for Fintech Microservices
+    version: 1.0.0
+
+# ============================================
+# LOGGING
+# ============================================
+logging:
+  level:
+    root: INFO
+    com.netflix.eureka: INFO
+    com.netflix.discovery: INFO

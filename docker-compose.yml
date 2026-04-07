@@ -1,0 +1,610 @@
+
+services:
+
+  # ============================================
+  # VERITABANI KATMANI
+  # ============================================
+
+  postgresql:
+    image: postgres:16-alpine
+    container_name: fintech-postgresql
+    environment:
+      POSTGRES_DB: fintech_db
+      POSTGRES_USER: fintech_user
+      POSTGRES_PASSWORD: fintech_secret_2026
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=en_US.UTF-8"
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+      - ./init-scripts/postgresql:/docker-entrypoint-initdb.d
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fintech_user -d fintech_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:7
+    container_name: fintech-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: fintech_mongo
+      MONGO_INITDB_ROOT_PASSWORD: mongo_secret_2026
+      MONGO_INITDB_DATABASE: fintech_transactions
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./init-scripts/mongodb:/docker-entrypoint-initdb.d
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "-u", "fintech_mongo", "-p", "mongo_secret_2026"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: fintech-redis
+    command: redis-server /usr/local/etc/redis/redis.conf
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_secret_2026", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================
+  # MESAJLASMA KATMANI
+  # ============================================
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: fintech-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+      ZOOKEEPER_4LW_COMMANDS_WHITELIST: "*"
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "echo srvr | nc localhost 2181 | grep Zookeeper"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: fintech-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 1073741824
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:7.6.0
+    container_name: fintech-kafka-connect
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:29092
+      CONNECT_REST_PORT: 8083
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_GROUP_ID: fintech-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: _fintech-connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: _fintech-connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: _fintech-connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./kafka-connect-config:/etc/kafka-connect
+    networks:
+      - fintech-network
+    command:
+      - bash
+      - -c
+      - |
+        echo "Installing MongoDB Sink Connector..."
+        confluent-hub install --no-prompt mongodb/kafka-connect-mongodb:1.12.0
+        echo "Starting Kafka Connect..."
+        /etc/confluent/docker/run
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8083/connectors || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: fintech-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: fintech_rabbit
+      RABBITMQ_DEFAULT_PASS: rabbit_secret_2026
+      RABBITMQ_DEFAULT_VHOST: fintech_vhost
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # ============================================
+  # YARDIMCI SERVISLER
+  # ============================================
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: fintech-kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: fintech-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: fintech-connect
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
+    ports:
+      - "9090:8080"
+    networks:
+      - fintech-network
+    restart: unless-stopped
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: fintech-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - fintech-network
+    command:
+      - bash
+      - -c
+      - |
+        echo "============================================"
+        echo "Kafka Topic'leri Oluşturuluyor..."
+        echo "============================================"
+
+        # Topic: transaction-raw (A servisi buraya yazar)
+        kafka-topics --create --if-not-exists \
+          --bootstrap-server kafka:29092 \
+          --topic transaction-raw \
+          --partitions 6 \
+          --replication-factor 1 \
+          --config retention.ms=604800000
+
+        # Topic: transaction-validated (B servisi buradan okur)
+        kafka-topics --create --if-not-exists \
+          --bootstrap-server kafka:29092 \
+          --topic transaction-validated \
+          --partitions 6 \
+          --replication-factor 1 \
+          --config retention.ms=604800000
+
+        # Topic: transaction-checked (C servisi buradan okur)
+        kafka-topics --create --if-not-exists \
+          --bootstrap-server kafka:29092 \
+          --topic transaction-checked \
+          --partitions 6 \
+          --replication-factor 1 \
+          --config retention.ms=604800000
+
+        # Topic: transaction-processed (D servisi buradan okur)
+        kafka-topics --create --if-not-exists \
+          --bootstrap-server kafka:29092 \
+          --topic transaction-processed \
+          --partitions 6 \
+          --replication-factor 1 \
+          --config retention.ms=604800000
+
+        # Topic: transaction-completed (Kafka Connect buradan okur -> MongoDB)
+        kafka-topics --create --if-not-exists \
+          --bootstrap-server kafka:29092 \
+          --topic transaction-completed \
+          --partitions 6 \
+          --replication-factor 1 \
+          --config retention.ms=2592000000
+
+        # Topic: transaction-dlq (Dead Letter Queue)
+        kafka-topics --create --if-not-exists \
+          --bootstrap-server kafka:29092 \
+          --topic transaction-dlq \
+          --partitions 3 \
+          --replication-factor 1 \
+          --config retention.ms=7776000000
+
+        echo ""
+        echo "============================================"
+        echo "Oluşturulan Topic'ler:"
+        echo "============================================"
+        kafka-topics --list --bootstrap-server kafka:29092
+
+        echo ""
+        echo "Topic'ler başarıyla oluşturuldu!"
+
+  # ============================================
+  # UYGULAMA SERVİSLERİ
+  # ============================================
+
+  eureka-server:
+    build:
+      context: ./eureka-server
+      dockerfile: Dockerfile
+    container_name: fintech-eureka-server
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      EUREKA_USER: eureka
+      EUREKA_PASSWORD: eureka_secret_2026
+    ports:
+      - "8761:8761"
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://eureka:eureka_secret_2026@localhost:8761/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: fintech-api-gateway
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      EUREKA_USER: eureka
+      EUREKA_PASSWORD: eureka_secret_2026
+      EUREKA_HOST: eureka-server
+      EUREKA_PORT: 8761
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_secret_2026
+      JWT_SECRET: fintech-jwt-secret-key-2026-very-long-and-secure
+    ports:
+      - "8080:8080"
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  user-service:
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
+    container_name: fintech-user-service
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      POSTGRES_HOST: postgresql
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: fintech_db
+      POSTGRES_USER: fintech_user
+      POSTGRES_PASSWORD: fintech_secret_2026
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_secret_2026
+      EUREKA_USER: eureka
+      EUREKA_PASSWORD: eureka_secret_2026
+      EUREKA_HOST: eureka-server
+      EUREKA_PORT: 8761
+      JWT_SECRET: fintech-jwt-secret-key-2026-very-long-and-secure
+      JWT_ACCESS_EXPIRATION_MS: 900000
+      JWT_REFRESH_EXPIRATION_MS: 604800000
+    ports:
+      - "8081:8081"
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8081/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  transaction-service:
+    build:
+      context: .
+      dockerfile: transaction-service/Dockerfile
+    container_name: fintech-transaction-service
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      postgresql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      POSTGRES_HOST: postgresql
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: fintech_db
+      POSTGRES_USER: fintech_user
+      POSTGRES_PASSWORD: fintech_secret_2026
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_secret_2026
+      EUREKA_USER: eureka
+      EUREKA_PASSWORD: eureka_secret_2026
+      EUREKA_HOST: eureka-server
+      EUREKA_PORT: 8761
+    ports:
+      - "8083:8083"
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8083/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  fraud-detection-service:
+    build:
+      context: .
+      dockerfile: fraud-detection-service/Dockerfile
+    container_name: fintech-fraud-detection-service
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      postgresql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      POSTGRES_HOST: postgresql
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: fintech_db
+      POSTGRES_USER: fintech_user
+      POSTGRES_PASSWORD: fintech_secret_2026
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_secret_2026
+      EUREKA_USER: eureka
+      EUREKA_PASSWORD: eureka_secret_2026
+      EUREKA_HOST: eureka-server
+      EUREKA_PORT: 8761
+    ports:
+      - "8084:8084"
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8084/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  account-service:
+    build:
+      context: .
+      dockerfile: account-service/Dockerfile
+    container_name: fintech-account-service
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      postgresql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      POSTGRES_HOST: postgresql
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: fintech_db
+      POSTGRES_USER: fintech_user
+      POSTGRES_PASSWORD: fintech_secret_2026
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: redis_secret_2026
+      EUREKA_USER: eureka
+      EUREKA_PASSWORD: eureka_secret_2026
+      EUREKA_HOST: eureka-server
+      EUREKA_PORT: 8761
+    ports:
+      - "8082:8082"
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8082/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    container_name: fintech-notification-service
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: fintech_rabbit
+      RABBITMQ_PASSWORD: rabbit_secret_2026
+      RABBITMQ_VHOST: fintech_vhost
+      EUREKA_USER: eureka
+      EUREKA_PASSWORD: eureka_secret_2026
+      EUREKA_HOST: eureka-server
+      EUREKA_PORT: 8761
+    ports:
+      - "8085:8085"
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8085/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  reporting-service:
+    build:
+      context: .
+      dockerfile: reporting-service/Dockerfile
+    container_name: fintech-reporting-service
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      MONGO_USER: fintech_mongo
+      MONGO_PASSWORD: mongo_secret_2026
+      MONGO_HOST: mongodb
+      MONGO_PORT: 27017
+      MONGO_DB: fintech_transactions
+      EUREKA_USER: eureka
+      EUREKA_PASSWORD: eureka_secret_2026
+      EUREKA_HOST: eureka-server
+      EUREKA_PORT: 8761
+    ports:
+      - "8086:8086"
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8086/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+# ============================================
+# VOLUMES
+# ============================================
+
+volumes:
+  postgresql_data:
+    driver: local
+  mongodb_data:
+    driver: local
+  redis_data:
+    driver: local
+  zookeeper_data:
+    driver: local
+  zookeeper_log:
+    driver: local
+  kafka_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+
+# ============================================
+# NETWORK
+# ============================================
+
+networks:
+  fintech-network:
+    driver: bridge
+    name: fintech-network

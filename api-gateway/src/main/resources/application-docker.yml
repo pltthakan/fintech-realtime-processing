@@ -1,0 +1,10 @@
+# Docker ortamı için override
+eureka:
+  instance:
+    hostname: api-gateway
+    prefer-ip-address: true
+
+logging:
+  level:
+    root: INFO
+    com.fintech.gateway: INFO
