@@ -4,7 +4,8 @@ A real-time fintech transaction processing platform built with Spring Boot micro
 
 The system processes financial transactions through an event-driven pipeline that includes validation, fraud detection, balance updates, notifications, and transaction archiving.
 
-![Login](images/login.png)
+<img width="1470" height="956" alt="login" src="https://github.com/user-attachments/assets/d5049c74-586a-4856-9fac-8a6dd3d8d799" />
+
 
 ---
 
@@ -21,19 +22,23 @@ The project uses a Kafka topic pipeline where each microservice is responsible f
 
 ## UI Preview
 
-![Dashboard](images/dashboard.png)
+<img width="1470" height="956" alt="dashboard" src="https://github.com/user-attachments/assets/5dd173dc-f429-48c1-85b7-d448376d46dd" />
+
 
 <details>
 <summary>See more screenshots</summary>
 
 ### Accounts
-![Accounts](images/accounts.png)
+<img width="1470" height="956" alt="accounts" src="https://github.com/user-attachments/assets/63fcd442-3b52-47a9-9268-021b44fef7e9" />
+
 
 ### Transactions
-![Transactions](images/transactions.png)
+<img width="1470" height="956" alt="transactions" src="https://github.com/user-attachments/assets/8d86bdc9-c14c-42dc-a4f4-ad91e7cb06d5" />
+
 
 ### New Transaction
-![New Transaction](images/new-transaction.png)
+<img width="1470" height="956" alt="new-transaction" src="https://github.com/user-attachments/assets/265b033e-bfb4-4084-8c0b-cd40e69f261a" />
+
 
 </details>
 
