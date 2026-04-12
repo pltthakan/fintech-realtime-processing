@@ -3,6 +3,8 @@ package com.fintech.account.service;
 import com.fintech.account.entity.Account;
 import com.fintech.account.repository.AccountRepository;
 import com.fintech.common.enums.AccountStatus;
+import com.fintech.common.enums.AccountType;
+import com.fintech.common.enums.Currency;
 import com.fintech.common.enums.TransactionType;
 import com.fintech.common.event.TransactionEvent;
 import com.fintech.common.exception.AccountFrozenException;
@@ -15,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -22,6 +25,56 @@ import java.util.List;
 public class AccountService {
 
     private final AccountRepository accountRepository;
+
+    /**
+     * Yeni hesap oluştur.
+     */
+    @Transactional
+    public Account createAccount(Long userId, String accountName, AccountType accountType,
+                                 Currency currency, BigDecimal initialBalance) {
+        // IBAN benzeri hesap numarası üret
+        String accountNumber = generateAccountNumber();
+
+        Account account = Account.builder()
+                .userId(userId)
+                .accountNumber(accountNumber)
+                .accountName(accountName != null ? accountName : getDefaultAccountName(accountType, currency))
+                .accountType(accountType)
+                .currency(currency)
+                .balance(initialBalance != null ? initialBalance : BigDecimal.ZERO)
+                .dailyLimit(getDefaultDailyLimit(accountType))
+                .status(AccountStatus.ACTIVE)
+                .build();
+
+        Account saved = accountRepository.save(account);
+        log.info("Yeni hesap oluşturuldu - userId: {}, accountNumber: {}, type: {}, currency: {}",
+                userId, accountNumber, accountType, currency);
+
+        return saved;
+    }
+
+    private String generateAccountNumber() {
+        String base = "TR33" + "0006" + "10" + String.format("%016d",
+                Math.abs(UUID.randomUUID().getMostSignificantBits() % 10000000000000000L));
+        return base;
+    }
+
+    private String getDefaultAccountName(AccountType type, Currency currency) {
+        String typeName = switch (type) {
+            case CHECKING -> "Vadesiz";
+            case SAVINGS -> "Birikim";
+            case INVESTMENT -> "Yatırım";
+        };
+        return typeName + " " + currency.name() + " Hesabı";
+    }
+
+    private BigDecimal getDefaultDailyLimit(AccountType type) {
+        return switch (type) {
+            case CHECKING -> new BigDecimal("50000.00");
+            case SAVINGS -> new BigDecimal("25000.00");
+            case INVESTMENT -> new BigDecimal("100000.00");
+        };
+    }
 
     /**
      * Pipeline'dan gelen işleme göre bakiye güncelle.
@@ -39,24 +92,16 @@ public class AccountService {
         }
     }
 
-    /**
-     * Transfer: kaynak hesaptan düş, hedef hesaba ekle
-     */
     private void processTransfer(TransactionEvent event) {
-        // Kaynak hesap (pessimistic lock)
         Account source = accountRepository.findByIdWithLock(event.getSourceAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getSourceAccountId()));
-
         validateAccount(source);
         validateBalance(source, event.getAmount());
 
-        // Hedef hesap (pessimistic lock)
         Account target = accountRepository.findByIdWithLock(event.getTargetAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getTargetAccountId()));
-
         validateAccount(target);
 
-        // Bakiye güncelle
         source.setBalance(source.getBalance().subtract(event.getAmount()));
         target.setBalance(target.getBalance().add(event.getAmount()));
 
@@ -70,57 +115,38 @@ public class AccountService {
                 target.getBalance().subtract(event.getAmount()), target.getBalance());
     }
 
-    /**
-     * Para yatırma: hedef hesaba ekle
-     */
     private void processDeposit(TransactionEvent event) {
         Account account = accountRepository.findByIdWithLock(event.getTargetAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getTargetAccountId()));
-
         validateAccount(account);
-
         account.setBalance(account.getBalance().add(event.getAmount()));
         accountRepository.save(account);
-
         log.info("Para yatırma tamamlandı - hesap: {}, yeni bakiye: {}",
                 account.getAccountNumber(), account.getBalance());
     }
 
-    /**
-     * Para çekme: kaynak hesaptan düş
-     */
     private void processWithdrawal(TransactionEvent event) {
         Account account = accountRepository.findByIdWithLock(event.getSourceAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getSourceAccountId()));
-
         validateAccount(account);
         validateBalance(account, event.getAmount());
-
         account.setBalance(account.getBalance().subtract(event.getAmount()));
         accountRepository.save(account);
-
         log.info("Para çekme tamamlandı - hesap: {}, yeni bakiye: {}",
                 account.getAccountNumber(), account.getBalance());
     }
 
-    /**
-     * Ödeme: kaynak hesaptan düş
-     */
     private void processPayment(TransactionEvent event) {
         Account account = accountRepository.findByIdWithLock(event.getSourceAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getSourceAccountId()));
-
         validateAccount(account);
         validateBalance(account, event.getAmount());
-
         account.setBalance(account.getBalance().subtract(event.getAmount()));
         accountRepository.save(account);
-
         log.info("Ödeme tamamlandı - hesap: {}, yeni bakiye: {}",
                 account.getAccountNumber(), account.getBalance());
     }
 
-    /** Hesap aktif mi kontrolü */
     private void validateAccount(Account account) {
         if (account.getStatus() == AccountStatus.FROZEN) {
             throw new AccountFrozenException(account.getId());
@@ -130,7 +156,6 @@ public class AccountService {
         }
     }
 
-    /** Yeterli bakiye var mı kontrolü */
     private void validateBalance(Account account, BigDecimal amount) {
         if (account.getBalance().compareTo(amount) < 0) {
             throw new InsufficientBalanceException(account.getId());
