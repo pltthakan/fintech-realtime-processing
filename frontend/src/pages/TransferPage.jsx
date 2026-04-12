@@ -52,7 +52,8 @@ export default function TransferPage() {
     try {
       const body = {
         sourceAccountId: Number(form.sourceAccountId),
-        targetAccountId: form.targetAccountId ? Number(form.targetAccountId) : null,
+        targetAccountId: (form.type === 'DEPOSIT') ? Number(form.sourceAccountId) :
+            (form.type === 'TRANSFER' && form.targetAccountId) ? Number(form.targetAccountId) : null,
         amount: Number(form.amount),
         currency: form.currency,
         type: form.type,

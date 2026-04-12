@@ -199,6 +199,15 @@ services:
   # YARDIMCI SERVISLER
   # ============================================
 
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: fintech-redisinsight
+    ports:
+      - "5540:5540"
+    networks:
+      - fintech-network
+    restart: unless-stopped
+
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: fintech-kafka-ui
