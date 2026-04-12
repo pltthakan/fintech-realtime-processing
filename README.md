@@ -22,23 +22,25 @@ The project uses a Kafka topic pipeline where each microservice is responsible f
 
 ## UI Preview
 
-<img width="1470" height="956" alt="dashboard" src="https://github.com/user-attachments/assets/5dd173dc-f429-48c1-85b7-d448376d46dd" />
+<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 42 18" src="https://github.com/user-attachments/assets/659756db-98ad-430f-ae2b-8f6a1eb04728" />
+
 
 
 <details>
 <summary>See more screenshots</summary>
 
 ### Accounts
-<img width="1470" height="956" alt="accounts" src="https://github.com/user-attachments/assets/63fcd442-3b52-47a9-9268-021b44fef7e9" />
+<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 43 25" src="https://github.com/user-attachments/assets/449f2d3f-12b6-431e-b37d-30387803c94a" />
 
 
 ### Transactions
-<img width="1470" height="956" alt="transactions" src="https://github.com/user-attachments/assets/8d86bdc9-c14c-42dc-a4f4-ad91e7cb06d5" />
+<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 44 25" src="https://github.com/user-attachments/assets/cde9dbbf-5a59-4f94-b381-fdd6101cc97b" />
 
 
 ### New Transaction
-<img width="1470" height="956" alt="new-transaction" src="https://github.com/user-attachments/assets/265b033e-bfb4-4084-8c0b-cd40e69f261a" />
+<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 47 26" src="https://github.com/user-attachments/assets/2801a10e-fd27-4c4d-831c-2099cebb0fa1" />
 
+<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 47 14" src="https://github.com/user-attachments/assets/71f95c25-d0d0-4e3c-8588-69eb103550db" />
 
 </details>
 
@@ -400,6 +402,24 @@ API Gateway:
 ```text
 http://localhost:8080
 ```
+
+---
+
+## System Monitoring & Infrastructure
+
+<details>
+<summary>View infrastructure dashboards</summary>
+
+### Kafka UI
+<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 55 00" src="https://github.com/user-attachments/assets/9623d9ca-ddd3-48d2-b76e-c520da4240e4" />
+
+### RabbitMQ
+<img width="1201" height="751" alt="Ekran Resmi 2026-04-13 00 59 48" src="https://github.com/user-attachments/assets/999b64fa-38cb-405a-9dbe-95f5e105364f" />
+
+### Eureka
+<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 54 31" src="https://github.com/user-attachments/assets/64d9d3d5-d682-4c43-8bf8-c3640595897b" />
+
+</details>
 
 ---
 
