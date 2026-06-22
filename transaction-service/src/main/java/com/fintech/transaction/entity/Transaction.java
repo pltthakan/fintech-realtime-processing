@@ -28,6 +28,10 @@ public class Transaction {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    /** JWT ile doğrulanmış işlemi başlatan kullanıcı. */
+    @Column(name = "user_id", nullable = false)
+    private Long userId;
+
     @Column(name = "source_account_id")
     private Long sourceAccountId;
 

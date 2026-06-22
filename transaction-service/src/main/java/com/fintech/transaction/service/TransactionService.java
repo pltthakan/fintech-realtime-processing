@@ -2,10 +2,13 @@ package com.fintech.transaction.service;
 
 import com.fintech.common.dto.request.TransactionRequest;
 import com.fintech.common.dto.response.TransactionResponse;
+import com.fintech.common.enums.TransactionType;
 import com.fintech.common.enums.TransactionStatus;
 import com.fintech.common.event.KafkaTopics;
 import com.fintech.common.event.TransactionEvent;
 import com.fintech.common.exception.DuplicateTransactionException;
+import com.fintech.common.exception.BusinessException;
+import com.fintech.common.exception.ForbiddenException;
 import com.fintech.common.exception.ResourceNotFoundException;
 import com.fintech.common.util.JsonUtil;
 import com.fintech.common.util.ReferenceGenerator;
@@ -17,6 +20,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +45,8 @@ public class TransactionService {
     @Transactional
     public TransactionResponse createTransaction(TransactionRequest request, Long userId, String username) {
 
+        validateSourceAccountOwnership(request, userId);
+
         // 1. İdempotency kontrolü
         if (request.getIdempotencyKey() != null) {
             transactionRepository.findByIdempotencyKey(request.getIdempotencyKey())
@@ -51,6 +57,7 @@ public class TransactionService {
 
         // 2. Transaction oluştur ve DB'ye kaydet
         Transaction transaction = Transaction.builder()
+                .userId(userId)
                 .sourceAccountId(request.getSourceAccountId())
                 .targetAccountId(request.getTargetAccountId())
                 .amount(request.getAmount())
@@ -132,19 +139,62 @@ public class TransactionService {
         log.info("İşlem durumu güncellendi - txId: {}, {} → {}", transactionId, oldStatus, newStatus);
     }
 
-    public TransactionResponse getTransactionById(UUID id) {
+    public TransactionResponse getTransactionById(UUID id, Long authenticatedUserId, String role) {
         Transaction transaction = transactionRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("İşlem", "id", id));
+        validateTransactionOwnership(transaction, authenticatedUserId, role);
         return toResponse(transaction);
     }
 
-    public Page<TransactionResponse> getTransactionsByAccount(Long accountId, Pageable pageable) {
-        return transactionRepository.findBySourceAccountIdOrderByCreatedAtDesc(accountId, pageable)
+    public Page<TransactionResponse> getTransactionsByAccount(
+            Long accountId, Long authenticatedUserId, String role, Pageable pageable) {
+        if (!isAdministrator(role) && !transactionRepository.existsAccountOwnedBy(accountId, authenticatedUserId)) {
+            throw new ForbiddenException();
+        }
+
+        Page<Transaction> transactions = isAdministrator(role)
+                ? transactionRepository.findBySourceAccountIdOrderByCreatedAtDesc(accountId, pageable)
+                : transactionRepository.findBySourceAccountIdAndUserIdOrderByCreatedAtDesc(
+                        accountId, authenticatedUserId, pageable);
+        return transactions
                 .map(this::toResponse);
     }
 
-    public List<TransactionStatusHistory> getTransactionHistory(UUID transactionId) {
+    public List<TransactionStatusHistory> getTransactionHistory(
+            UUID transactionId, Long authenticatedUserId, String role) {
+        Transaction transaction = transactionRepository.findById(transactionId)
+                .orElseThrow(() -> new ResourceNotFoundException("İşlem", "id", transactionId));
+        validateTransactionOwnership(transaction, authenticatedUserId, role);
         return statusHistoryRepository.findByTransactionIdOrderByCreatedAtAsc(transactionId);
+    }
+
+    private void validateSourceAccountOwnership(TransactionRequest request, Long userId) {
+        if (userId == null || userId <= 0) {
+            throw new ForbiddenException();
+        }
+
+        Long accountId = request.getType() == TransactionType.DEPOSIT
+                ? request.getTargetAccountId()
+                : request.getSourceAccountId();
+
+        if (accountId == null) {
+            throw new BusinessException("İşlem için sahip olunan hesap belirtilmelidir",
+                    "ACCOUNT_REQUIRED", HttpStatus.BAD_REQUEST);
+        }
+
+        if (!transactionRepository.existsAccountOwnedBy(accountId, userId)) {
+            throw new ForbiddenException();
+        }
+    }
+
+    private void validateTransactionOwnership(Transaction transaction, Long authenticatedUserId, String role) {
+        if (!isAdministrator(role) && !java.util.Objects.equals(transaction.getUserId(), authenticatedUserId)) {
+            throw new ForbiddenException();
+        }
+    }
+
+    private boolean isAdministrator(String role) {
+        return "ADMIN".equals(role);
     }
 
     private void saveStatusHistory(UUID txId, TransactionStatus prev, TransactionStatus next, String service, String msg) {

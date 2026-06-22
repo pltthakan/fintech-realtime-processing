@@ -76,6 +76,7 @@ CREATE INDEX idx_accounts_status         ON account_service.accounts (status);
 
 CREATE TABLE transaction_service.transactions (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id             BIGINT       NOT NULL,
     source_account_id   BIGINT,
     target_account_id   BIGINT,
     amount              NUMERIC(15,2) NOT NULL,
@@ -101,6 +102,7 @@ CREATE TABLE transaction_service.transactions (
 -- Transaction tablosu indexleri
 CREATE INDEX idx_tx_source_account ON transaction_service.transactions (source_account_id);
 CREATE INDEX idx_tx_target_account ON transaction_service.transactions (target_account_id);
+CREATE INDEX idx_tx_user_id        ON transaction_service.transactions (user_id);
 CREATE INDEX idx_tx_status         ON transaction_service.transactions (status);
 CREATE INDEX idx_tx_type           ON transaction_service.transactions (type);
 CREATE INDEX idx_tx_created_at     ON transaction_service.transactions (created_at DESC);

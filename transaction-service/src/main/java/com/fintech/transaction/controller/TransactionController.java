@@ -30,8 +30,8 @@ public class TransactionController {
     @PostMapping
     public ResponseEntity<ApiResponse<TransactionResponse>> createTransaction(
             @Valid @RequestBody TransactionRequest request,
-            @RequestHeader(value = "X-User-Id", defaultValue = "0") Long userId,
-            @RequestHeader(value = "X-User-Name", defaultValue = "system") String username) {
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader("X-User-Name") String username) {
 
         TransactionResponse response = transactionService.createTransaction(request, userId, username);
         return ResponseEntity
@@ -43,8 +43,12 @@ public class TransactionController {
      * İşlem detayını getir
      */
     @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<TransactionResponse>> getTransaction(@PathVariable UUID id) {
-        return ResponseEntity.ok(ApiResponse.success(transactionService.getTransactionById(id)));
+    public ResponseEntity<ApiResponse<TransactionResponse>> getTransaction(
+            @PathVariable UUID id,
+            @RequestHeader("X-User-Id") Long authenticatedUserId,
+            @RequestHeader("X-User-Role") String role) {
+        return ResponseEntity.ok(ApiResponse.success(
+                transactionService.getTransactionById(id, authenticatedUserId, role)));
     }
 
     /**
@@ -54,10 +58,12 @@ public class TransactionController {
     public ResponseEntity<ApiResponse<Page<TransactionResponse>>> getTransactionsByAccount(
             @PathVariable Long accountId,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            @RequestHeader("X-User-Id") Long authenticatedUserId,
+            @RequestHeader("X-User-Role") String role) {
 
         Page<TransactionResponse> transactions = transactionService
-                .getTransactionsByAccount(accountId, PageRequest.of(page, size));
+                .getTransactionsByAccount(accountId, authenticatedUserId, role, PageRequest.of(page, size));
         return ResponseEntity.ok(ApiResponse.success(transactions));
     }
 
@@ -65,7 +71,11 @@ public class TransactionController {
      * İşlem durum geçmişini getir (pipeline'daki her aşama)
      */
     @GetMapping("/{id}/history")
-    public ResponseEntity<ApiResponse<List<TransactionStatusHistory>>> getTransactionHistory(@PathVariable UUID id) {
-        return ResponseEntity.ok(ApiResponse.success(transactionService.getTransactionHistory(id)));
+    public ResponseEntity<ApiResponse<List<TransactionStatusHistory>>> getTransactionHistory(
+            @PathVariable UUID id,
+            @RequestHeader("X-User-Id") Long authenticatedUserId,
+            @RequestHeader("X-User-Role") String role) {
+        return ResponseEntity.ok(ApiResponse.success(
+                transactionService.getTransactionHistory(id, authenticatedUserId, role)));
     }
 }
