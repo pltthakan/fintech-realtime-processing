@@ -10,6 +10,8 @@ Copy `.env.example` to `.env` and replace every password and `JWT_SECRET` before
 
 The Docker Compose defaults expose only the frontend, API gateway, and local-only operational interfaces. Internal microservices, databases, and brokers are reachable only on the Docker network.
 
+For an existing PostgreSQL volume, apply schema updates with `./manage.sh migrate` before starting a version that requires a new column.
+
 <img width="1470" height="956" alt="login" src="https://github.com/user-attachments/assets/d5049c74-586a-4856-9fac-8a6dd3d8d799" />
 
 

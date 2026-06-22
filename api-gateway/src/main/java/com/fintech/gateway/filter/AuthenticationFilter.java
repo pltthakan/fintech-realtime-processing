@@ -52,6 +52,11 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
                 return onError(exchange, "Token geçersiz veya süresi dolmuş", HttpStatus.UNAUTHORIZED);
             }
 
+            Long userId = jwtUtil.extractUserId(token);
+            if (userId == null) {
+                return onError(exchange, "Token kullanıcı kimliği içermiyor", HttpStatus.UNAUTHORIZED);
+            }
+
             // Rol bazlı erişim kontrolü
             if (config.getRequiredRoles() != null && !config.getRequiredRoles().isEmpty()) {
                 String userRole = jwtUtil.extractRole(token);
@@ -60,11 +65,16 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
                 }
             }
 
-            // Token bilgilerini downstream servislere ilet
+            // İstemcinin sahte kimlik header'ı göndermesini engelle ve token bilgisini ilet.
             ServerHttpRequest modifiedRequest = request.mutate()
-                    .header("X-User-Id", String.valueOf(jwtUtil.extractUserId(token)))
-                    .header("X-User-Name", jwtUtil.extractUsername(token))
-                    .header("X-User-Role", jwtUtil.extractRole(token))
+                    .headers(headers -> {
+                        headers.remove("X-User-Id");
+                        headers.remove("X-User-Name");
+                        headers.remove("X-User-Role");
+                        headers.set("X-User-Id", String.valueOf(userId));
+                        headers.set("X-User-Name", jwtUtil.extractUsername(token));
+                        headers.set("X-User-Role", jwtUtil.extractRole(token));
+                    })
                     .build();
 
             log.info("İstek doğrulandı - User: {}, Role: {}, Path: {}",

@@ -8,6 +8,7 @@ import com.fintech.common.enums.Currency;
 import com.fintech.common.enums.TransactionType;
 import com.fintech.common.event.TransactionEvent;
 import com.fintech.common.exception.AccountFrozenException;
+import com.fintech.common.exception.ForbiddenException;
 import com.fintech.common.exception.InsufficientBalanceException;
 import com.fintech.common.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 @Slf4j
@@ -95,6 +97,7 @@ public class AccountService {
     private void processTransfer(TransactionEvent event) {
         Account source = accountRepository.findByIdWithLock(event.getSourceAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getSourceAccountId()));
+        validateEventOwnership(source, event);
         validateAccount(source);
         validateBalance(source, event.getAmount());
 
@@ -118,6 +121,7 @@ public class AccountService {
     private void processDeposit(TransactionEvent event) {
         Account account = accountRepository.findByIdWithLock(event.getTargetAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getTargetAccountId()));
+        validateEventOwnership(account, event);
         validateAccount(account);
         account.setBalance(account.getBalance().add(event.getAmount()));
         accountRepository.save(account);
@@ -128,6 +132,7 @@ public class AccountService {
     private void processWithdrawal(TransactionEvent event) {
         Account account = accountRepository.findByIdWithLock(event.getSourceAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getSourceAccountId()));
+        validateEventOwnership(account, event);
         validateAccount(account);
         validateBalance(account, event.getAmount());
         account.setBalance(account.getBalance().subtract(event.getAmount()));
@@ -139,6 +144,7 @@ public class AccountService {
     private void processPayment(TransactionEvent event) {
         Account account = accountRepository.findByIdWithLock(event.getSourceAccountId())
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getSourceAccountId()));
+        validateEventOwnership(account, event);
         validateAccount(account);
         validateBalance(account, event.getAmount());
         account.setBalance(account.getBalance().subtract(event.getAmount()));
@@ -162,19 +168,38 @@ public class AccountService {
         }
     }
 
-    // ── REST API için CRUD metodları ──
-
-    public Account getAccountById(Long id) {
-        return accountRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", id));
+    private void validateEventOwnership(Account account, TransactionEvent event) {
+        if (event.getUserId() == null || !Objects.equals(account.getUserId(), event.getUserId())) {
+            throw new ForbiddenException();
+        }
     }
 
-    public List<Account> getAccountsByUserId(Long userId) {
+    // ── REST API için CRUD metodları ──
+
+    public Account getAccountById(Long id, Long authenticatedUserId, boolean administrator) {
+        Account account = accountRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", id));
+        validateApiOwnership(account, authenticatedUserId, administrator);
+        return account;
+    }
+
+    public List<Account> getAccountsByUserId(Long userId, Long authenticatedUserId, boolean administrator) {
+        if (!administrator && !Objects.equals(userId, authenticatedUserId)) {
+            throw new ForbiddenException();
+        }
         return accountRepository.findByUserId(userId);
     }
 
-    public Account getAccountByNumber(String accountNumber) {
-        return accountRepository.findByAccountNumber(accountNumber)
+    public Account getAccountByNumber(String accountNumber, Long authenticatedUserId, boolean administrator) {
+        Account account = accountRepository.findByAccountNumber(accountNumber)
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "accountNumber", accountNumber));
+        validateApiOwnership(account, authenticatedUserId, administrator);
+        return account;
+    }
+
+    private void validateApiOwnership(Account account, Long authenticatedUserId, boolean administrator) {
+        if (!administrator && !Objects.equals(account.getUserId(), authenticatedUserId)) {
+            throw new ForbiddenException();
+        }
     }
 }

@@ -141,6 +141,15 @@ deploy_connector() {
     curl -s "$connect_url/connectors/mongodb-sink-completed-transactions/status" | python3 -m json.tool 2>/dev/null || echo "Henüz hazır değil, birkaç saniye bekleyin."
 }
 
+migrate_database() {
+    print_header "PostgreSQL Şema Göçü Uygulanıyor"
+
+    docker compose -f $COMPOSE_FILE exec -T postgresql sh -c \
+        'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/02-add-transaction-owner.sql'
+
+    print_success "Transaction sahiplik göçü uygulandı"
+}
+
 check_topics() {
     print_header "Kafka Topic Listesi"
     docker compose -f $COMPOSE_FILE exec kafka kafka-topics --list --bootstrap-server localhost:9092
@@ -163,6 +172,7 @@ show_help() {
     echo "  urls            Erişim adreslerini göster"
     echo "  logs [servis]   Logları takip et (opsiyonel: servis adı)"
     echo "  connector       MongoDB Sink Connector'ı deploy et"
+    echo "  migrate         Mevcut veritabanına şema göçlerini uygula"
     echo "  topics          Kafka topic'lerini listele"
     echo "  help            Bu yardım mesajını göster"
     echo ""
@@ -186,6 +196,7 @@ case "${1:-help}" in
     urls)       show_urls ;;
     logs)       show_logs "$2" ;;
     connector)  deploy_connector ;;
+    migrate)    migrate_database ;;
     topics)     check_topics ;;
     help|*)     show_help ;;
 esac

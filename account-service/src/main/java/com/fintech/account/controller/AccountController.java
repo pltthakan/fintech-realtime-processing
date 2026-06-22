@@ -28,18 +28,30 @@ public class AccountController {
     private final AccountService accountService;
 
     @GetMapping("/{id}")
-    public ResponseEntity<ApiResponse<Account>> getAccountById(@PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.success(accountService.getAccountById(id)));
+    public ResponseEntity<ApiResponse<Account>> getAccountById(
+            @PathVariable Long id,
+            @RequestHeader("X-User-Id") Long authenticatedUserId,
+            @RequestHeader("X-User-Role") String role) {
+        return ResponseEntity.ok(ApiResponse.success(
+                accountService.getAccountById(id, authenticatedUserId, isAdministrator(role))));
     }
 
     @GetMapping("/user/{userId}")
-    public ResponseEntity<ApiResponse<List<Account>>> getAccountsByUserId(@PathVariable Long userId) {
-        return ResponseEntity.ok(ApiResponse.success(accountService.getAccountsByUserId(userId)));
+    public ResponseEntity<ApiResponse<List<Account>>> getAccountsByUserId(
+            @PathVariable Long userId,
+            @RequestHeader("X-User-Id") Long authenticatedUserId,
+            @RequestHeader("X-User-Role") String role) {
+        return ResponseEntity.ok(ApiResponse.success(
+                accountService.getAccountsByUserId(userId, authenticatedUserId, isAdministrator(role))));
     }
 
     @GetMapping("/number/{accountNumber}")
-    public ResponseEntity<ApiResponse<Account>> getAccountByNumber(@PathVariable String accountNumber) {
-        return ResponseEntity.ok(ApiResponse.success(accountService.getAccountByNumber(accountNumber)));
+    public ResponseEntity<ApiResponse<Account>> getAccountByNumber(
+            @PathVariable String accountNumber,
+            @RequestHeader("X-User-Id") Long authenticatedUserId,
+            @RequestHeader("X-User-Role") String role) {
+        return ResponseEntity.ok(ApiResponse.success(
+                accountService.getAccountByNumber(accountNumber, authenticatedUserId, isAdministrator(role))));
     }
 
     /**
@@ -49,7 +61,7 @@ public class AccountController {
     @PostMapping
     public ResponseEntity<ApiResponse<Account>> createAccount(
             @Valid @RequestBody CreateAccountRequest request,
-            @RequestHeader(value = "X-User-Id", defaultValue = "0") Long userId) {
+            @RequestHeader("X-User-Id") Long userId) {
 
         Account account = accountService.createAccount(
                 userId,
@@ -62,6 +74,10 @@ public class AccountController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(ApiResponse.success(account, "Hesap başarıyla oluşturuldu"));
+    }
+
+    private boolean isAdministrator(String role) {
+        return "ADMIN".equals(role);
     }
 
     @Data
