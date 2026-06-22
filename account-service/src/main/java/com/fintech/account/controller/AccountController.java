@@ -2,6 +2,9 @@ package com.fintech.account.controller;
 
 import com.fintech.account.entity.Account;
 import com.fintech.account.service.AccountService;
+import com.fintech.common.audit.AuditAction;
+import com.fintech.common.audit.AuditLogEntry;
+import com.fintech.common.audit.AuditLogService;
 import com.fintech.common.dto.response.ApiResponse;
 import com.fintech.common.enums.AccountType;
 import com.fintech.common.enums.Currency;
@@ -17,6 +20,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpServletRequest;
+
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -26,32 +31,45 @@ import java.util.List;
 public class AccountController {
 
     private final AccountService accountService;
+    private final AuditLogService auditLogService;
 
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<Account>> getAccountById(
             @PathVariable Long id,
             @RequestHeader("X-User-Id") Long authenticatedUserId,
-            @RequestHeader("X-User-Role") String role) {
-        return ResponseEntity.ok(ApiResponse.success(
-                accountService.getAccountById(id, authenticatedUserId, isAdministrator(role))));
+            @RequestHeader("X-User-Name") String username,
+            @RequestHeader("X-User-Role") String role,
+            HttpServletRequest request) {
+        Account account = accountService.getAccountById(id, authenticatedUserId, isAdministrator(role));
+        audit(authenticatedUserId, username, role, AuditAction.ACCOUNT_VIEWED, "ACCOUNT", id.toString(),
+                "GET", request, null);
+        return ResponseEntity.ok(ApiResponse.success(account));
     }
 
     @GetMapping("/user/{userId}")
     public ResponseEntity<ApiResponse<List<Account>>> getAccountsByUserId(
             @PathVariable Long userId,
             @RequestHeader("X-User-Id") Long authenticatedUserId,
-            @RequestHeader("X-User-Role") String role) {
-        return ResponseEntity.ok(ApiResponse.success(
-                accountService.getAccountsByUserId(userId, authenticatedUserId, isAdministrator(role))));
+            @RequestHeader("X-User-Name") String username,
+            @RequestHeader("X-User-Role") String role,
+            HttpServletRequest request) {
+        List<Account> accounts = accountService.getAccountsByUserId(userId, authenticatedUserId, isAdministrator(role));
+        audit(authenticatedUserId, username, role, AuditAction.ACCOUNT_LIST_VIEWED, "USER", userId.toString(),
+                "GET", request, "accountCount=" + accounts.size());
+        return ResponseEntity.ok(ApiResponse.success(accounts));
     }
 
     @GetMapping("/number/{accountNumber}")
     public ResponseEntity<ApiResponse<Account>> getAccountByNumber(
             @PathVariable String accountNumber,
             @RequestHeader("X-User-Id") Long authenticatedUserId,
-            @RequestHeader("X-User-Role") String role) {
-        return ResponseEntity.ok(ApiResponse.success(
-                accountService.getAccountByNumber(accountNumber, authenticatedUserId, isAdministrator(role))));
+            @RequestHeader("X-User-Name") String username,
+            @RequestHeader("X-User-Role") String role,
+            HttpServletRequest request) {
+        Account account = accountService.getAccountByNumber(accountNumber, authenticatedUserId, isAdministrator(role));
+        audit(authenticatedUserId, username, role, AuditAction.ACCOUNT_VIEWED, "ACCOUNT", account.getId().toString(),
+                "GET", request, "lookup=accountNumber");
+        return ResponseEntity.ok(ApiResponse.success(account));
     }
 
     /**
@@ -61,7 +79,10 @@ public class AccountController {
     @PostMapping
     public ResponseEntity<ApiResponse<Account>> createAccount(
             @Valid @RequestBody CreateAccountRequest request,
-            @RequestHeader("X-User-Id") Long userId) {
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader("X-User-Name") String username,
+            @RequestHeader("X-User-Role") String role,
+            HttpServletRequest httpRequest) {
 
         Account account = accountService.createAccount(
                 userId,
@@ -71,6 +92,9 @@ public class AccountController {
                 request.getInitialBalance() != null ? request.getInitialBalance() : BigDecimal.ZERO
         );
 
+        audit(userId, username, role, AuditAction.ACCOUNT_CREATED, "ACCOUNT", account.getId().toString(),
+                "POST", httpRequest, "type=" + account.getAccountType() + ",currency=" + account.getCurrency());
+
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(ApiResponse.success(account, "Hesap başarıyla oluşturuldu"));
@@ -78,6 +102,30 @@ public class AccountController {
 
     private boolean isAdministrator(String role) {
         return "ADMIN".equals(role);
+    }
+
+    private void audit(Long userId, String username, String role, AuditAction action, String resourceType,
+                       String resourceId, String httpMethod, HttpServletRequest request, String details) {
+        auditLogService.record(AuditLogEntry.builder()
+                .actorUserId(userId)
+                .actorUsername(username)
+                .actorRole(role)
+                .action(action)
+                .resourceType(resourceType)
+                .resourceId(resourceId)
+                .serviceName("account-service")
+                .httpMethod(httpMethod)
+                .clientIp(resolveClientIp(request))
+                .details(details)
+                .build());
+    }
+
+    private String resolveClientIp(HttpServletRequest request) {
+        String clientIp = request.getHeader("X-Client-Ip");
+        if (clientIp != null && !clientIp.isBlank()) {
+            return clientIp;
+        }
+        return request.getRemoteAddr();
     }
 
     @Data

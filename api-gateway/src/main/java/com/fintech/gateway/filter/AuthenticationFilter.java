@@ -66,14 +66,23 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
             }
 
             // İstemcinin sahte kimlik header'ı göndermesini engelle ve token bilgisini ilet.
+            String clientIp = request.getRemoteAddress() != null
+                    && request.getRemoteAddress().getAddress() != null
+                    ? request.getRemoteAddress().getAddress().getHostAddress()
+                    : null;
             ServerHttpRequest modifiedRequest = request.mutate()
                     .headers(headers -> {
                         headers.remove("X-User-Id");
                         headers.remove("X-User-Name");
                         headers.remove("X-User-Role");
+                        headers.remove("X-Client-Ip");
+                        headers.remove("X-Forwarded-For");
                         headers.set("X-User-Id", String.valueOf(userId));
                         headers.set("X-User-Name", jwtUtil.extractUsername(token));
                         headers.set("X-User-Role", jwtUtil.extractRole(token));
+                        if (clientIp != null) {
+                            headers.set("X-Client-Ip", clientIp);
+                        }
                     })
                     .build();
 
