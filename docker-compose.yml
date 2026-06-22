@@ -9,19 +9,17 @@ services:
     image: postgres:16-alpine
     container_name: fintech-postgresql
     environment:
-      POSTGRES_DB: fintech_db
-      POSTGRES_USER: fintech_user
-      POSTGRES_PASSWORD: fintech_secret_2026
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=en_US.UTF-8"
-    ports:
-      - "5433:5432"
     volumes:
       - postgresql_data:/var/lib/postgresql/data
       - ./init-scripts/postgresql:/docker-entrypoint-initdb.d
     networks:
       - fintech-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fintech_user -d fintech_db"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -31,18 +29,16 @@ services:
     image: mongo:7
     container_name: fintech-mongodb
     environment:
-      MONGO_INITDB_ROOT_USERNAME: fintech_mongo
-      MONGO_INITDB_ROOT_PASSWORD: mongo_secret_2026
-      MONGO_INITDB_DATABASE: fintech_transactions
-    ports:
-      - "27017:27017"
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:?Set MONGO_USER in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?Set MONGO_PASSWORD in .env}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:?Set MONGO_DB in .env}
     volumes:
       - mongodb_data:/data/db
       - ./init-scripts/mongodb:/docker-entrypoint-initdb.d
     networks:
       - fintech-network
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "-u", "fintech_mongo", "-p", "mongo_secret_2026"]
+      test: ["CMD-SHELL", "mongosh --eval \"db.adminCommand('ping')\" -u \"$$MONGO_INITDB_ROOT_USERNAME\" -p \"$$MONGO_INITDB_ROOT_PASSWORD\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -51,16 +47,16 @@ services:
   redis:
     image: redis:7-alpine
     container_name: fintech-redis
-    command: redis-server /usr/local/etc/redis/redis.conf
-    ports:
-      - "6379:6379"
+    command: ["sh", "-c", "exec redis-server /usr/local/etc/redis/redis.conf --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     volumes:
       - redis_data:/data
       - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf
     networks:
       - fintech-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis_secret_2026", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -78,8 +74,6 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
       ZOOKEEPER_SYNC_LIMIT: 2
       ZOOKEEPER_4LW_COMMANDS_WHITELIST: "*"
-    ports:
-      - "2181:2181"
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
@@ -114,9 +108,6 @@ services:
       KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_LOG_RETENTION_HOURS: 168
       KAFKA_LOG_RETENTION_BYTES: 1073741824
-    ports:
-      - "9092:9092"
-      - "29092:29092"
     volumes:
       - kafka_data:/var/lib/kafka/data
     networks:
@@ -152,8 +143,11 @@ services:
       CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
       CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+      MONGO_URI: ${MONGO_URI:?Set MONGO_URI in .env}
     ports:
-      - "8083:8083"
+      - "127.0.0.1:${KAFKA_CONNECT_HOST_PORT:-8088}:8083"
     volumes:
       - ./kafka-connect-config:/etc/kafka-connect
     networks:
@@ -178,12 +172,11 @@ services:
     image: rabbitmq:3.13-management
     container_name: fintech-rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: fintech_rabbit
-      RABBITMQ_DEFAULT_PASS: rabbit_secret_2026
-      RABBITMQ_DEFAULT_VHOST: fintech_vhost
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:?Set RABBITMQ_VHOST in .env}
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:15672:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     networks:
@@ -203,7 +196,7 @@ services:
     image: redis/redisinsight:latest
     container_name: fintech-redisinsight
     ports:
-      - "5540:5540"
+      - "127.0.0.1:5540:5540"
     networks:
       - fintech-network
     restart: unless-stopped
@@ -221,7 +214,7 @@ services:
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: fintech-connect
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
     ports:
-      - "9090:8080"
+      - "127.0.0.1:9090:8080"
     networks:
       - fintech-network
     restart: unless-stopped
@@ -310,14 +303,14 @@ services:
     container_name: fintech-eureka-server
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      EUREKA_USER: eureka
-      EUREKA_PASSWORD: eureka_secret_2026
+      EUREKA_USER: ${EUREKA_USER:?Set EUREKA_USER in .env}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
     ports:
-      - "8761:8761"
+      - "127.0.0.1:8761:8761"
     networks:
       - fintech-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://eureka:eureka_secret_2026@localhost:8761/actuator/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8761/actuator/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -336,16 +329,16 @@ services:
         condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      EUREKA_USER: eureka
-      EUREKA_PASSWORD: eureka_secret_2026
+      EUREKA_USER: ${EUREKA_USER:?Set EUREKA_USER in .env}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
       EUREKA_HOST: eureka-server
       EUREKA_PORT: 8761
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: redis_secret_2026
-      JWT_SECRET: fintech-jwt-secret-key-2026-very-long-and-secure
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${API_GATEWAY_HOST_PORT:-8087}:8080"
     networks:
       - fintech-network
     healthcheck:
@@ -372,21 +365,19 @@ services:
       SPRING_PROFILES_ACTIVE: docker
       POSTGRES_HOST: postgresql
       POSTGRES_PORT: 5432
-      POSTGRES_DB: fintech_db
-      POSTGRES_USER: fintech_user
-      POSTGRES_PASSWORD: fintech_secret_2026
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: redis_secret_2026
-      EUREKA_USER: eureka
-      EUREKA_PASSWORD: eureka_secret_2026
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      EUREKA_USER: ${EUREKA_USER:?Set EUREKA_USER in .env}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
       EUREKA_HOST: eureka-server
       EUREKA_PORT: 8761
-      JWT_SECRET: fintech-jwt-secret-key-2026-very-long-and-secure
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       JWT_ACCESS_EXPIRATION_MS: 900000
       JWT_REFRESH_EXPIRATION_MS: 604800000
-    ports:
-      - "8081:8081"
     networks:
       - fintech-network
     healthcheck:
@@ -415,19 +406,17 @@ services:
       SPRING_PROFILES_ACTIVE: docker
       POSTGRES_HOST: postgresql
       POSTGRES_PORT: 5432
-      POSTGRES_DB: fintech_db
-      POSTGRES_USER: fintech_user
-      POSTGRES_PASSWORD: fintech_secret_2026
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: redis_secret_2026
-      EUREKA_USER: eureka
-      EUREKA_PASSWORD: eureka_secret_2026
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      EUREKA_USER: ${EUREKA_USER:?Set EUREKA_USER in .env}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
       EUREKA_HOST: eureka-server
       EUREKA_PORT: 8761
-    ports:
-      - "8083:8083"
     networks:
       - fintech-network
     healthcheck:
@@ -456,19 +445,17 @@ services:
       SPRING_PROFILES_ACTIVE: docker
       POSTGRES_HOST: postgresql
       POSTGRES_PORT: 5432
-      POSTGRES_DB: fintech_db
-      POSTGRES_USER: fintech_user
-      POSTGRES_PASSWORD: fintech_secret_2026
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: redis_secret_2026
-      EUREKA_USER: eureka
-      EUREKA_PASSWORD: eureka_secret_2026
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      EUREKA_USER: ${EUREKA_USER:?Set EUREKA_USER in .env}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
       EUREKA_HOST: eureka-server
       EUREKA_PORT: 8761
-    ports:
-      - "8084:8084"
     networks:
       - fintech-network
     healthcheck:
@@ -497,19 +484,17 @@ services:
       SPRING_PROFILES_ACTIVE: docker
       POSTGRES_HOST: postgresql
       POSTGRES_PORT: 5432
-      POSTGRES_DB: fintech_db
-      POSTGRES_USER: fintech_user
-      POSTGRES_PASSWORD: fintech_secret_2026
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: redis_secret_2026
-      EUREKA_USER: eureka
-      EUREKA_PASSWORD: eureka_secret_2026
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      EUREKA_USER: ${EUREKA_USER:?Set EUREKA_USER in .env}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
       EUREKA_HOST: eureka-server
       EUREKA_PORT: 8761
-    ports:
-      - "8082:8082"
     networks:
       - fintech-network
     healthcheck:
@@ -537,15 +522,13 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: 5672
-      RABBITMQ_USER: fintech_rabbit
-      RABBITMQ_PASSWORD: rabbit_secret_2026
-      RABBITMQ_VHOST: fintech_vhost
-      EUREKA_USER: eureka
-      EUREKA_PASSWORD: eureka_secret_2026
+      RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:?Set RABBITMQ_VHOST in .env}
+      EUREKA_USER: ${EUREKA_USER:?Set EUREKA_USER in .env}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
       EUREKA_HOST: eureka-server
       EUREKA_PORT: 8761
-    ports:
-      - "8085:8085"
     networks:
       - fintech-network
     healthcheck:
@@ -568,17 +551,15 @@ services:
         condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      MONGO_USER: fintech_mongo
-      MONGO_PASSWORD: mongo_secret_2026
+      MONGO_URI: ${MONGO_URI:?Set MONGO_URI in .env}
       MONGO_HOST: mongodb
       MONGO_PORT: 27017
-      MONGO_DB: fintech_transactions
-      EUREKA_USER: eureka
-      EUREKA_PASSWORD: eureka_secret_2026
+      MONGO_DB: ${MONGO_DB:?Set MONGO_DB in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      EUREKA_USER: ${EUREKA_USER:?Set EUREKA_USER in .env}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
       EUREKA_HOST: eureka-server
       EUREKA_PORT: 8761
-    ports:
-      - "8086:8086"
     networks:
       - fintech-network
     healthcheck:
@@ -592,7 +573,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "3000:3000"
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-3001}:3000"
     depends_on:
       - api-gateway
     networks:

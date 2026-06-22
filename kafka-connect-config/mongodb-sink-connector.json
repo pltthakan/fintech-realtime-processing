@@ -6,7 +6,7 @@
 
     "topics": "transaction-completed",
 
-    "connection.uri": "mongodb://fintech_mongo:mongo_secret_2026@mongodb:27017",
+    "connection.uri": "${env:MONGO_URI}",
     "database": "fintech_transactions",
     "collection": "completed_transactions",
 

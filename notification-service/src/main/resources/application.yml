@@ -17,9 +17,9 @@ spring:
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
     port: ${RABBITMQ_PORT:5672}
-    username: ${RABBITMQ_USER:fintech_rabbit}
-    password: ${RABBITMQ_PASSWORD:rabbit_secret_2026}
-    virtual-host: ${RABBITMQ_VHOST:fintech_vhost}
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASSWORD}
+    virtual-host: ${RABBITMQ_VHOST}
 
 # ============================================
 # EUREKA CLIENT
@@ -30,7 +30,7 @@ eureka:
     instance-id: ${spring.application.name}:${random.value}
   client:
     service-url:
-      defaultZone: http://${EUREKA_USER:eureka}:${EUREKA_PASSWORD:eureka_secret_2026}@${EUREKA_HOST:localhost}:${EUREKA_PORT:8761}/eureka/
+      defaultZone: http://${EUREKA_USER}:${EUREKA_PASSWORD}@${EUREKA_HOST:localhost}:${EUREKA_PORT:8761}/eureka/
     fetch-registry: true
     register-with-eureka: true
 

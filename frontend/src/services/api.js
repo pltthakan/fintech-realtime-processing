@@ -1,7 +1,7 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
-// Vite proxy /api → http://localhost:8080
+// Vite proxy /api → http://localhost:8087
 const api = axios.create({
   baseURL: '/api/v1',
   headers: {
