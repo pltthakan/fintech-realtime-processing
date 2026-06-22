@@ -12,7 +12,7 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:redis_secret_2026}
+      password: ${REDIS_PASSWORD}
       database: 1
 
   # ============================================
@@ -132,7 +132,7 @@ eureka:
     instance-id: ${spring.application.name}:${random.value}
   client:
     service-url:
-      defaultZone: http://${EUREKA_USER:eureka}:${EUREKA_PASSWORD:eureka_secret_2026}@${EUREKA_HOST:localhost}:${EUREKA_PORT:8761}/eureka/
+      defaultZone: http://${EUREKA_USER}:${EUREKA_PASSWORD}@${EUREKA_HOST:localhost}:${EUREKA_PORT:8761}/eureka/
     fetch-registry: true
     register-with-eureka: true
 
@@ -140,7 +140,7 @@ eureka:
 # JWT
 # ============================================
 jwt:
-  secret: ${JWT_SECRET:fintech-jwt-secret-key-2026-very-long-and-secure}
+  secret: ${JWT_SECRET}
 
 # ============================================
 # RESILIENCE4J (Circuit Breaker)

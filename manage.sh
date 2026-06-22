@@ -91,13 +91,18 @@ show_status() {
 show_urls() {
     echo ""
     echo -e "${GREEN}Erişim Adresleri:${NC}"
-    echo "  PostgreSQL  : localhost:5432  (user: fintech_user)"
-    echo "  MongoDB     : localhost:27017 (user: fintech_mongo)"
-    echo "  Redis       : localhost:6379"
-    echo "  Kafka       : localhost:9092"
+    echo "  Frontend    : http://localhost:${FRONTEND_HOST_PORT:-3001}"
+    echo "  API Gateway : http://localhost:${API_GATEWAY_HOST_PORT:-8087}"
+    echo "  Eureka      : http://localhost:8761"
     echo "  Kafka UI    : http://localhost:9090"
-    echo "  Kafka Connect REST: http://localhost:8083"
-    echo "  RabbitMQ UI : http://localhost:15672 (user: fintech_rabbit)"
+    echo "  Kafka Connect REST: http://localhost:${KAFKA_CONNECT_HOST_PORT:-8088}"
+    echo "  RabbitMQ UI : http://localhost:15672"
+    echo "  RedisInsight: http://localhost:5540"
+    echo ""
+    echo -e "${YELLOW}Sadece Docker ağına açık servisler:${NC}"
+    echo "  PostgreSQL, MongoDB, Redis, Kafka, Zookeeper, RabbitMQ AMQP"
+    echo "  User, Account, Transaction, Fraud, Notification ve Reporting servisleri"
+    echo "  Kimlik bilgileri: .env (Git tarafından yok sayılır)"
     echo ""
 }
 
@@ -115,7 +120,8 @@ deploy_connector() {
 
     # Kafka Connect hazır mı kontrol et
     echo "Kafka Connect hazır mı kontrol ediliyor..."
-    until curl -s http://localhost:8083/connectors > /dev/null 2>&1; do
+    local connect_url="http://localhost:${KAFKA_CONNECT_HOST_PORT:-8088}"
+    until curl -s "$connect_url/connectors" > /dev/null 2>&1; do
         echo "  Kafka Connect bekleniyor..."
         sleep 5
     done
@@ -126,13 +132,13 @@ deploy_connector() {
     curl -s -X POST \
         -H "Content-Type: application/json" \
         -d @kafka-connect-config/mongodb-sink-connector.json \
-        http://localhost:8083/connectors | python3 -m json.tool 2>/dev/null || echo ""
+        "$connect_url/connectors" | python3 -m json.tool 2>/dev/null || echo ""
 
     print_success "MongoDB Sink Connector deploy edildi"
 
     echo ""
     echo "Connector durumu:"
-    curl -s http://localhost:8083/connectors/mongodb-sink-completed-transactions/status | python3 -m json.tool 2>/dev/null || echo "Henüz hazır değil, birkaç saniye bekleyin."
+    curl -s "$connect_url/connectors/mongodb-sink-completed-transactions/status" | python3 -m json.tool 2>/dev/null || echo "Henüz hazır değil, birkaç saniye bekleyin."
 }
 
 check_topics() {

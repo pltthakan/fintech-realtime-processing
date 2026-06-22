@@ -4,6 +4,12 @@ A real-time fintech transaction processing platform built with Spring Boot micro
 
 The system processes financial transactions through an event-driven pipeline that includes validation, fraud detection, balance updates, notifications, and transaction archiving.
 
+## Local configuration
+
+Copy `.env.example` to `.env` and replace every password and `JWT_SECRET` before starting the stack. `.env` is intentionally ignored by Git.
+
+The Docker Compose defaults expose only the frontend, API gateway, and local-only operational interfaces. Internal microservices, databases, and brokers are reachable only on the Docker network.
+
 <img width="1470" height="956" alt="login" src="https://github.com/user-attachments/assets/d5049c74-586a-4856-9fac-8a6dd3d8d799" />
 
 
@@ -439,4 +445,3 @@ http://localhost:8080
 # Example Resume Description
 
 Developed a real-time fintech transaction processing platform using Spring Boot microservices, Apache Kafka, PostgreSQL, MongoDB, Redis, RabbitMQ, and Docker. Designed an event-driven Kafka topic pipeline for fraud detection, balance processing, notifications, and transaction archiving.
-
