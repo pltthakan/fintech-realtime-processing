@@ -59,6 +59,18 @@ spring:
                 redis-rate-limiter.requestedTokens: 1
 
         # ────────────────────────────────────────
+        # AUDIT LOGS (sadece ADMIN)
+        # ────────────────────────────────────────
+        - id: audit-log-service
+          uri: lb://account-service
+          predicates:
+            - Path=/api/v1/audit-logs/**
+          filters:
+            - name: AuthenticationFilter
+              args:
+                requiredRoles: ADMIN
+
+        # ────────────────────────────────────────
         # ACCOUNT SERVICE (:8082)
         # ────────────────────────────────────────
         - id: account-service

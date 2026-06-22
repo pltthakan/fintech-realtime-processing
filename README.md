@@ -10,7 +10,7 @@ Copy `.env.example` to `.env` and replace every password and `JWT_SECRET` before
 
 The Docker Compose defaults expose only the frontend, API gateway, and local-only operational interfaces. Internal microservices, databases, and brokers are reachable only on the Docker network.
 
-For an existing PostgreSQL volume, apply schema updates with `./manage.sh migrate` before starting a version that requires a new column.
+For an existing PostgreSQL volume, apply schema updates with `./manage.sh migrate` before starting a version that requires a new table or column.
 
 <img width="1470" height="956" alt="login" src="https://github.com/user-attachments/assets/d5049c74-586a-4856-9fac-8a6dd3d8d799" />
 
@@ -67,6 +67,7 @@ The project uses a Kafka topic pipeline where each microservice is responsible f
 * RabbitMQ for asynchronous notification delivery
 * Eureka-based service discovery
 * API Gateway routing with Spring Cloud Gateway
+* Immutable audit trail for account and transaction access/changes
 * Docker Compose environment for all services
 * Kafka UI for topic monitoring
 
@@ -148,6 +149,7 @@ Responsibilities:
 * Update account balances
 * Process transfer operations
 * Persist account and transaction information
+* Store account/transaction audit records in `audit_service.audit_logs`
 
 Consumes:
 
@@ -160,6 +162,12 @@ Produces:
 Database schema:
 
 * `account_service`
+
+### Audit log API
+
+`GET /api/v1/audit-logs?page=0&size=50` is routed through the API Gateway and is restricted to the `ADMIN` role. It returns the actor, time, action, account/transaction resource, service, and trusted client IP.
+
+Successful account and transaction reads/creates are recorded automatically. Audit records are append-only at the application level; no update or delete API is exposed.
 
 ---
 

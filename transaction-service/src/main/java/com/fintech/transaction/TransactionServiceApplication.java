@@ -2,12 +2,15 @@ package com.fintech.transaction;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 
 @SpringBootApplication(scanBasePackages = {
         "com.fintech.transaction",
-        "com.fintech.common.exception"
+        "com.fintech.common.exception",
+        "com.fintech.common.audit"
 })
+@EntityScan(basePackages = {"com.fintech.transaction.entity", "com.fintech.common.audit"})
 @EnableDiscoveryClient
 public class TransactionServiceApplication {
 

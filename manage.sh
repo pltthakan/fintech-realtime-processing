@@ -147,7 +147,10 @@ migrate_database() {
     docker compose -f $COMPOSE_FILE exec -T postgresql sh -c \
         'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/02-add-transaction-owner.sql'
 
-    print_success "Transaction sahiplik göçü uygulandı"
+    docker compose -f $COMPOSE_FILE exec -T postgresql sh -c \
+        'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/03-add-audit-logs.sql'
+
+    print_success "Transaction sahiplik ve audit log göçleri uygulandı"
 }
 
 check_topics() {
