@@ -12,7 +12,6 @@ The Docker Compose defaults expose only the frontend, API gateway, and local-onl
 
 For an existing PostgreSQL volume, apply schema updates with `./manage.sh migrate` before starting a version that requires a new table or column.
 
-<img width="1470" height="956" alt="login" src="https://github.com/user-attachments/assets/d5049c74-586a-4856-9fac-8a6dd3d8d799" />
 
 
 ---
