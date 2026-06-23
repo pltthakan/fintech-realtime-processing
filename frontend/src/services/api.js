@@ -110,4 +110,11 @@ export const reportService = {
   getTransaction: (id) => api.get(`/reports/transaction/${id}`),
 };
 
+export const auditService = {
+  getLogs: ({ page = 0, size = 25, actorUsername, action, resourceType } = {}) =>
+      api.get('/audit-logs', {
+        params: { page, size, actorUsername: actorUsername || undefined, action: action || undefined, resourceType: resourceType || undefined },
+      }),
+};
+
 export default api;

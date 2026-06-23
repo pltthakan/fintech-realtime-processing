@@ -10,6 +10,7 @@ import com.fintech.common.exception.ForbiddenException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -36,6 +37,9 @@ public class AuditLogController {
     public ResponseEntity<ApiResponse<PagedResponse<AuditLog>>> getRecentAuditLogs(
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "50") @Min(1) @Max(100) int size,
+            @RequestParam(required = false) @Size(max = 50) String actorUsername,
+            @RequestParam(required = false) AuditAction action,
+            @RequestParam(required = false) @Size(max = 30) String resourceType,
             @RequestHeader("X-User-Id") Long userId,
             @RequestHeader("X-User-Name") String username,
             @RequestHeader("X-User-Role") String role,
@@ -44,7 +48,8 @@ public class AuditLogController {
             throw new ForbiddenException();
         }
 
-        Page<AuditLog> auditLogs = auditLogService.getRecent(PageRequest.of(page, size));
+        Page<AuditLog> auditLogs = auditLogService.getRecent(
+                PageRequest.of(page, size), actorUsername, action, resourceType);
         auditLogService.record(AuditLogEntry.builder()
                 .actorUserId(userId)
                 .actorUsername(username)
@@ -55,7 +60,9 @@ public class AuditLogController {
                 .serviceName("account-service")
                 .httpMethod("GET")
                 .clientIp(resolveClientIp(request))
-                .details("page=" + page + ",size=" + size)
+                .details("page=" + page + ",size=" + size
+                        + (action != null ? ",action=" + action : "")
+                        + (resourceType != null && !resourceType.isBlank() ? ",resourceType=" + resourceType : ""))
                 .build());
 
         PagedResponse<AuditLog> response = PagedResponse.<AuditLog>builder()

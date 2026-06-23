@@ -8,6 +8,7 @@ export default function ReportsPage() {
   const [activeReport, setActiveReport] = useState(null);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [hasRunReport, setHasRunReport] = useState(false);
 
   // Date range state
   const [startDate, setStartDate] = useState('');
@@ -24,6 +25,7 @@ export default function ReportsPage() {
   const runReport = async () => {
     setLoading(true);
     setResults([]);
+    setHasRunReport(true);
     try {
       let res;
       if (activeReport === 'date-range') {
@@ -58,7 +60,11 @@ export default function ReportsPage() {
           return (
             <div
               key={r.id}
-              onClick={() => { setActiveReport(isActive ? null : r.id); setResults([]); }}
+              onClick={() => {
+                setActiveReport(isActive ? null : r.id);
+                setResults([]);
+                setHasRunReport(false);
+              }}
               className={`bg-white rounded-xl p-5 border-[1.5px] cursor-pointer transition-all
                 ${isActive ? 'border-blue-400 shadow-md shadow-blue-600/5' : 'border-slate-200 hover:border-slate-300'}`}
             >
@@ -163,8 +169,8 @@ export default function ReportsPage() {
         </div>
       )}
 
-      {!loading && activeReport && results.length === 0 && !loading && (
-        <EmptyState title="Henüz sonuç yok" description="Filtreleri uygulayıp rapor oluşturun" />
+      {!loading && activeReport && hasRunReport && results.length === 0 && (
+        <EmptyState title="Sonuç bulunamadı" description="Seçtiğiniz filtrelerle eşleşen işlem yok." />
       )}
     </div>
   );

@@ -165,7 +165,7 @@ Database schema:
 
 ### Audit log API
 
-`GET /api/v1/audit-logs?page=0&size=50` is routed through the API Gateway and is restricted to the `ADMIN` role. It returns the actor, time, action, account/transaction resource, service, and trusted client IP.
+`GET /api/v1/audit-logs?page=0&size=50` is routed through the API Gateway and is restricted to the `ADMIN` role. Optional `actorUsername`, `action`, and `resourceType` filters are supported. It returns the actor, time, action, account/transaction resource, service, and trusted client IP.
 
 Successful account and transaction reads/creates are recorded automatically. Audit records are append-only at the application level; no update or delete API is exposed.
 

@@ -327,6 +327,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      user-service:
+        condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: docker
       EUREKA_USER: ${EUREKA_USER:?Set EUREKA_USER in .env}
