@@ -33,6 +33,8 @@ The project uses a Kafka topic pipeline where each microservice is responsible f
 <img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 42 18" src="https://github.com/user-attachments/assets/659756db-98ad-430f-ae2b-8f6a1eb04728" />
 
 
+<img width="1470" height="956" alt="Ekran Resmi 2026-06-23 12 06 51" src="https://github.com/user-attachments/assets/e80a9188-6083-4e23-bf8c-df5f2ec3caae" />
+
 
 <details>
 <summary>See more screenshots</summary>
@@ -49,6 +51,22 @@ The project uses a Kafka topic pipeline where each microservice is responsible f
 <img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 47 26" src="https://github.com/user-attachments/assets/2801a10e-fd27-4c4d-831c-2099cebb0fa1" />
 
 <img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 47 14" src="https://github.com/user-attachments/assets/71f95c25-d0d0-4e3c-8588-69eb103550db" />
+
+### Administrator tasks
+<img width="1470" height="956" alt="Ekran Resmi 2026-06-23 12 04 39" src="https://github.com/user-attachments/assets/4892d4ca-8fd6-47fb-9ae5-ee431647c366" />
+
+
+
+<img width="1470" height="956" alt="Ekran Resmi 2026-06-23 12 06 41" src="https://github.com/user-attachments/assets/77171f6a-9e11-4f28-9a69-61ce7a17574b" />
+
+
+
+<img width="1470" height="956" alt="Ekran Resmi 2026-06-23 12 05 09" src="https://github.com/user-attachments/assets/d14d5e92-68e8-44b9-8c63-07b929cb2a12" />
+
+
+
+<img width="1470" height="956" alt="Ekran Resmi 2026-06-23 12 05 36" src="https://github.com/user-attachments/assets/6d9c9009-e7fe-4777-9968-de8fc9f02507" />
+
 
 </details>
 
