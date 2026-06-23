@@ -99,11 +99,11 @@ public class ReportingService {
     }
 
     /**
-     * Hesap bazlı işlem geçmişi
+     * Hesap bazlı işlem geçmişi. Transferin hem kaynak hem hedef hesabı rapora dahil edilir.
      */
     public Page<CompletedTransaction> getTransactionsByAccount(Long accountId, int page, int size) {
-        return transactionRepository.findBySourceAccountIdOrderByCompletedTimestampDesc(
-                accountId, PageRequest.of(page, size));
+        return transactionRepository.findBySourceAccountIdOrTargetAccountIdOrderByCompletedTimestampDesc(
+                accountId, accountId, PageRequest.of(page, size));
     }
 
     /**
@@ -112,7 +112,10 @@ public class ReportingService {
     public List<CompletedTransaction> getTransactionsByDateRange(LocalDate startDate, LocalDate endDate) {
         Instant start = startDate.atStartOfDay(ZoneId.of("Europe/Istanbul")).toInstant();
         Instant end = endDate.plusDays(1).atStartOfDay(ZoneId.of("Europe/Istanbul")).toInstant();
-        return transactionRepository.findByCompletedTimestampBetween(start, end);
+        // Kafka Connect tarih alanlarını ISO-8601 metin olarak saklar. Bu biçim kronolojik olarak
+        // sıralanabildiği için UTC sınırlarıyla metin karşılaştırması doğru tarih aralığını verir.
+        return transactionRepository.findByCompletedTimestampRange(
+                start.toString(), end.toString());
     }
 
     /**

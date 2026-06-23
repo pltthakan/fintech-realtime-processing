@@ -4,9 +4,9 @@ import com.fintech.reporting.dto.CompletedTransaction;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.data.mongodb.repository.Query;
 import org.springframework.stereotype.Repository;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,9 +17,11 @@ public interface CompletedTransactionRepository extends MongoRepository<Complete
 
     Page<CompletedTransaction> findByUserIdOrderByCompletedTimestampDesc(Long userId, Pageable pageable);
 
-    Page<CompletedTransaction> findBySourceAccountIdOrderByCompletedTimestampDesc(Long accountId, Pageable pageable);
+    Page<CompletedTransaction> findBySourceAccountIdOrTargetAccountIdOrderByCompletedTimestampDesc(
+            Long sourceAccountId, Long targetAccountId, Pageable pageable);
 
-    List<CompletedTransaction> findByCompletedTimestampBetween(Instant start, Instant end);
+    @Query("{ 'completedTimestamp': { '$gte': ?0, '$lt': ?1 } }")
+    List<CompletedTransaction> findByCompletedTimestampRange(String start, String end);
 
     List<CompletedTransaction> findByIsSuspiciousTrue();
 
@@ -31,5 +33,6 @@ public interface CompletedTransactionRepository extends MongoRepository<Complete
 
     long countByIsBlockedTrue();
 
-    List<CompletedTransaction> findByTypeAndCompletedTimestampBetween(String type, Instant start, Instant end);
+    @Query("{ 'type': ?0, 'completedTimestamp': { '$gte': ?1, '$lt': ?2 } }")
+    List<CompletedTransaction> findByTypeAndCompletedTimestampRange(String type, String start, String end);
 }

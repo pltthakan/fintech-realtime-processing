@@ -127,18 +127,23 @@ deploy_connector() {
     done
     print_success "Kafka Connect hazır"
 
-    # Connector'ı deploy et
-    echo "Connector oluşturuluyor..."
-    curl -s -X POST \
+    # Connector'ı oluştur veya mevcut yapılandırmayı güncelle.
+    # PUT, tekrar çalıştırıldığında 409 Conflict üretmeden idempotent davranır.
+    local connector_name="mongodb-sink-completed-transactions"
+    local connector_config
+    connector_config=$(python3 -c 'import json; print(json.dumps(json.load(open("kafka-connect-config/mongodb-sink-connector.json"))["config"]))')
+
+    echo "Connector yapılandırılıyor..."
+    curl -sS -X PUT \
         -H "Content-Type: application/json" \
-        -d @kafka-connect-config/mongodb-sink-connector.json \
-        "$connect_url/connectors" | python3 -m json.tool 2>/dev/null || echo ""
+        --data "$connector_config" \
+        "$connect_url/connectors/$connector_name/config" | python3 -m json.tool 2>/dev/null || echo ""
 
     print_success "MongoDB Sink Connector deploy edildi"
 
     echo ""
     echo "Connector durumu:"
-    curl -s "$connect_url/connectors/mongodb-sink-completed-transactions/status" | python3 -m json.tool 2>/dev/null || echo "Henüz hazır değil, birkaç saniye bekleyin."
+    curl -s "$connect_url/connectors/$connector_name/status" | python3 -m json.tool 2>/dev/null || echo "Henüz hazır değil, birkaç saniye bekleyin."
 }
 
 migrate_database() {
@@ -150,7 +155,10 @@ migrate_database() {
     docker compose -f $COMPOSE_FILE exec -T postgresql sh -c \
         'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/03-add-audit-logs.sql'
 
-    print_success "Transaction sahiplik ve audit log göçleri uygulandı"
+    docker compose -f $COMPOSE_FILE exec -T mongodb sh -c \
+        'mongosh --quiet --authenticationDatabase admin --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" "$MONGO_INITDB_DATABASE" --file /docker-entrypoint-initdb.d/02-align-completed-transaction-schema.js'
+
+    print_success "PostgreSQL ve MongoDB şema göçleri uygulandı"
 }
 
 check_topics() {

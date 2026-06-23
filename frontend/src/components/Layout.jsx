@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   LayoutDashboard, CreditCard, ArrowLeftRight, Send,
-  Shield, Users, FileText, LogOut
+  Shield, Users, FileText, ScrollText, LogOut
 } from 'lucide-react';
 
 const navItems = [
@@ -18,8 +18,12 @@ const adminItems = [
   { to: '/reports', label: 'Raporlar',        icon: FileText },
 ];
 
+const adminOnlyItems = [
+  { to: '/audit-logs', label: 'Audit Kayıtları', icon: ScrollText },
+];
+
 export default function Layout({ children }) {
-  const { user, logout, isPrivileged } = useAuth();
+  const { user, logout, isPrivileged, isAdmin } = useAuth();
   const navigate = useNavigate();
 
   const handleLogout = () => {
@@ -56,6 +60,9 @@ export default function Layout({ children }) {
                 Yönetim
               </div>
               {adminItems.map(item => (
+                <SidebarLink key={item.to} {...item} />
+              ))}
+              {isAdmin && adminOnlyItems.map(item => (
                 <SidebarLink key={item.to} {...item} />
               ))}
             </>

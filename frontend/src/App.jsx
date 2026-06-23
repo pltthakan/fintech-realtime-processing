@@ -10,13 +10,15 @@ import TransferPage from './pages/TransferPage';
 import FraudPage from './pages/FraudPage';
 import UsersPage from './pages/UsersPage';
 import ReportsPage from './pages/ReportsPage';
+import AuditLogsPage from './pages/AuditLogsPage';
 
 // ── Protected Route ──
-function ProtectedRoute({ children, adminOnly = false }) {
+function ProtectedRoute({ children, adminOnly = false, adminRequired = false }) {
   const { user, isPrivileged } = useAuth();
 
   if (!user) return <Navigate to="/login" replace />;
   if (adminOnly && !isPrivileged) return <Navigate to="/" replace />;
+  if (adminRequired && user.role !== 'ADMIN') return <Navigate to="/" replace />;
 
   return <Layout>{children}</Layout>;
 }
@@ -45,6 +47,7 @@ export default function App() {
       <Route path="/fraud" element={<ProtectedRoute adminOnly><FraudPage /></ProtectedRoute>} />
       <Route path="/users" element={<ProtectedRoute adminOnly><UsersPage /></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute adminOnly><ReportsPage /></ProtectedRoute>} />
+      <Route path="/audit-logs" element={<ProtectedRoute adminRequired><AuditLogsPage /></ProtectedRoute>} />
 
       {/* 404 → Dashboard */}
       <Route path="*" element={<Navigate to="/" replace />} />
