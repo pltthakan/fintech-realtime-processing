@@ -21,7 +21,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,7 +35,7 @@ public class TransactionService {
 
     private final TransactionRepository transactionRepository;
     private final TransactionStatusHistoryRepository statusHistoryRepository;
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final OutboxService outboxService;
 
     /**
      * Yeni işlem oluştur ve Kafka pipeline'ına gönder.
@@ -79,7 +78,7 @@ public class TransactionService {
         transaction = transactionRepository.save(transaction);
         saveStatusHistory(transaction.getId(), TransactionStatus.PENDING, TransactionStatus.VALIDATED, "transaction-service", "İlk validasyon tamamlandı");
 
-        // 5. Kafka event oluştur ve transaction-raw topic'ine gönder
+        // 5. Kafka event oluştur ve aynı DB transaction'ında outbox'a kaydet
         TransactionEvent event = TransactionEvent.builder()
                 .transactionId(transaction.getId().toString())
                 .sourceAccountId(transaction.getSourceAccountId())
@@ -98,18 +97,12 @@ public class TransactionService {
                 .build();
 
         String eventJson = JsonUtil.toJson(event);
-        final Transaction savedTx = transaction;
-        kafkaTemplate.send(KafkaTopics.TRANSACTION_RAW, savedTx.getId().toString(), eventJson)
-                .whenComplete((result, ex) -> {
-                    if (ex != null) {
-                        log.error("Kafka'ya yazma hatası - txId: {}, error: {}", savedTx.getId(), ex.getMessage());
-                    } else {
-                        log.info("İşlem Kafka'ya gönderildi - txId: {}, topic: {}, partition: {}",
-                                savedTx.getId(),
-                                result.getRecordMetadata().topic(),
-                                result.getRecordMetadata().partition());
-                    }
-                });
+        outboxService.add(
+                transaction.getId().toString(),
+                KafkaTopics.TRANSACTION_RAW,
+                transaction.getId().toString(),
+                eventJson
+        );
 
         log.info("Yeni işlem oluşturuldu - txId: {}, ref: {}, amount: {} {}, type: {}",
                 transaction.getId(), transaction.getReferenceNumber(),

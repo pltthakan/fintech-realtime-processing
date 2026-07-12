@@ -279,6 +279,8 @@ Responsibilities:
 ```text
 transaction-raw
     ↓
+transaction-validated
+    ↓
 transaction-checked
     ↓
 transaction-processed
@@ -287,6 +289,18 @@ transaction-completed
 ```
 
 Each topic represents a stage of the transaction lifecycle.
+
+## Reliable event delivery
+
+The money-movement path uses the Transactional Outbox and Consumer Inbox patterns:
+
+* `transaction-service` stores the new transaction and its `transaction-raw` outbox event in the same PostgreSQL transaction.
+* `account-service` atomically claims each transaction event in `processed_events`, updates balances, and writes the next outbox event.
+* Duplicate Kafka deliveries are ignored by the `(consumer_name, event_id)` primary key, so a balance operation is applied once.
+* Outbox publishers wait for Kafka acknowledgement before marking an event `PUBLISHED`. Failed sends stay `PENDING` and are retried.
+* Account consumer failures are retried and then published to `transaction-dlq` instead of being swallowed.
+
+Because outbox delivery is intentionally at-least-once, downstream consumers must also be idempotent when they perform non-repeatable side effects.
 
 ---
 
@@ -459,8 +473,8 @@ http://localhost:8080
 # Future Improvements
 
 * Distributed transaction management with Saga Pattern
-* Outbox Pattern support
-* Dead Letter Queue topics
+* Extend Consumer Inbox idempotency to notification and reporting side effects
+* Operational DLQ replay tooling
 * Centralized logging with ELK or Grafana
 * OpenTelemetry and tracing
 * Resilience4j circuit breaker and retry

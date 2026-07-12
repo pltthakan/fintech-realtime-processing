@@ -71,6 +71,33 @@ CREATE INDEX idx_accounts_user_id        ON account_service.accounts (user_id);
 CREATE INDEX idx_accounts_account_number ON account_service.accounts (account_number);
 CREATE INDEX idx_accounts_status         ON account_service.accounts (status);
 
+-- Kafka consumer inbox: aynı transaction event'inin bakiyeyi ikinci kez
+-- değiştirmesini engeller. Kayıt, bakiye güncellemesiyle aynı DB transaction'ında yazılır.
+CREATE TABLE account_service.processed_events (
+    consumer_name       VARCHAR(100) NOT NULL,
+    event_id            VARCHAR(100) NOT NULL,
+    processed_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (consumer_name, event_id)
+);
+
+-- Account DB değişikliği ile Kafka publish isteğini atomik hale getiren outbox.
+CREATE TABLE account_service.outbox_events (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    aggregate_id        VARCHAR(100) NOT NULL,
+    topic               VARCHAR(150) NOT NULL,
+    event_key           VARCHAR(150) NOT NULL,
+    payload             TEXT         NOT NULL,
+    status              VARCHAR(20)  NOT NULL DEFAULT 'PENDING',
+    attempts            INTEGER      NOT NULL DEFAULT 0,
+    last_error          VARCHAR(1000),
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    published_at        TIMESTAMPTZ,
+    CONSTRAINT chk_account_outbox_status CHECK (status IN ('PENDING', 'PUBLISHED'))
+);
+
+CREATE INDEX idx_account_outbox_pending
+    ON account_service.outbox_events (status, created_at);
+
 -- ============================================
 -- TRANSACTION SERVICE TABLOLARI
 -- ============================================
@@ -95,7 +122,7 @@ CREATE TABLE transaction_service.transactions (
     completed_at        TIMESTAMPTZ,
 
     CONSTRAINT chk_tx_type   CHECK (type   IN ('TRANSFER', 'PAYMENT', 'DEPOSIT', 'WITHDRAWAL')),
-    CONSTRAINT chk_tx_status CHECK (status IN ('PENDING', 'VALIDATED', 'CHECKED', 'PROCESSING', 'PROCESSED', 'COMPLETED', 'FAILED', 'CANCELLED')),
+    CONSTRAINT chk_tx_status CHECK (status IN ('PENDING', 'VALIDATED', 'FRAUD_CHECK', 'CHECKED', 'BLOCKED', 'PROCESSING', 'PROCESSED', 'COMPLETED', 'FAILED', 'CANCELLED')),
     CONSTRAINT chk_amount_positive CHECK (amount > 0),
     CONSTRAINT chk_fraud_score     CHECK (fraud_score BETWEEN 0 AND 100)
 );
@@ -121,6 +148,24 @@ CREATE TABLE transaction_service.transaction_status_history (
 );
 
 CREATE INDEX idx_tx_history_tx_id ON transaction_service.transaction_status_history (transaction_id);
+
+-- Transaction kaydı ile ilk Kafka event'ini atomik hale getiren outbox.
+CREATE TABLE transaction_service.outbox_events (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    aggregate_id        VARCHAR(100) NOT NULL,
+    topic               VARCHAR(150) NOT NULL,
+    event_key           VARCHAR(150) NOT NULL,
+    payload             TEXT         NOT NULL,
+    status              VARCHAR(20)  NOT NULL DEFAULT 'PENDING',
+    attempts            INTEGER      NOT NULL DEFAULT 0,
+    last_error          VARCHAR(1000),
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    published_at        TIMESTAMPTZ,
+    CONSTRAINT chk_transaction_outbox_status CHECK (status IN ('PENDING', 'PUBLISHED'))
+);
+
+CREATE INDEX idx_transaction_outbox_pending
+    ON transaction_service.outbox_events (status, created_at);
 
 -- ============================================
 -- AUDIT SERVICE TABLOLARI
