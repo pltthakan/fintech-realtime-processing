@@ -2,6 +2,10 @@ package com.fintech.account.controller;
 
 import com.fintech.account.entity.Account;
 import com.fintech.account.service.AccountService;
+import com.fintech.account.service.LedgerService;
+import com.fintech.account.dto.LedgerEntryResponse;
+import com.fintech.account.dto.LedgerTransactionResponse;
+import com.fintech.account.dto.AccountReconciliationResponse;
 import com.fintech.common.audit.AuditAction;
 import com.fintech.common.audit.AuditLogEntry;
 import com.fintech.common.audit.AuditLogService;
@@ -18,12 +22,14 @@ import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.servlet.http.HttpServletRequest;
 
-import java.math.BigDecimal;
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/accounts")
@@ -31,7 +37,53 @@ import java.util.List;
 public class AccountController {
 
     private final AccountService accountService;
+    private final LedgerService ledgerService;
     private final AuditLogService auditLogService;
+
+    @GetMapping("/{accountId}/ledger")
+    public ResponseEntity<ApiResponse<Page<LedgerEntryResponse>>> getAccountLedger(
+            @PathVariable Long accountId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader("X-User-Name") String username,
+            @RequestHeader("X-User-Role") String role,
+            HttpServletRequest request) {
+        accountService.getAccountById(accountId, userId, isAdministrator(role));
+        Page<LedgerEntryResponse> entries = ledgerService.getAccountEntries(
+                accountId, PageRequest.of(page, Math.min(Math.max(size, 1), 100)));
+        audit(userId, username, role, AuditAction.ACCOUNT_VIEWED, "LEDGER", accountId.toString(),
+                "GET", request, "entryCount=" + entries.getNumberOfElements());
+        return ResponseEntity.ok(ApiResponse.success(entries));
+    }
+
+    @GetMapping("/{accountId}/reconciliation")
+    public ResponseEntity<ApiResponse<AccountReconciliationResponse>> reconcileAccount(
+            @PathVariable Long accountId,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader("X-User-Name") String username,
+            @RequestHeader("X-User-Role") String role,
+            HttpServletRequest request) {
+        Account account = accountService.getAccountById(accountId, userId, isAdministrator(role));
+        AccountReconciliationResponse result = ledgerService.reconcile(account);
+        audit(userId, username, role, AuditAction.ACCOUNT_VIEWED, "RECONCILIATION", accountId.toString(),
+                "GET", request, "reconciled=" + result.isReconciled());
+        return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    @GetMapping("/ledger/transactions/{transactionId}")
+    public ResponseEntity<ApiResponse<LedgerTransactionResponse>> getLedgerTransaction(
+            @PathVariable UUID transactionId,
+            @RequestHeader("X-User-Id") Long userId,
+            @RequestHeader("X-User-Name") String username,
+            @RequestHeader("X-User-Role") String role,
+            HttpServletRequest request) {
+        LedgerTransactionResponse journal = ledgerService.getTransaction(
+                transactionId, userId, isAdministrator(role));
+        audit(userId, username, role, AuditAction.TRANSACTION_VIEWED, "LEDGER_TRANSACTION",
+                transactionId.toString(), "GET", request, "balanced=" + journal.isBalanced());
+        return ResponseEntity.ok(ApiResponse.success(journal));
+    }
 
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<Account>> getAccountById(
@@ -88,8 +140,7 @@ public class AccountController {
                 userId,
                 request.getAccountName(),
                 request.getAccountType() != null ? request.getAccountType() : AccountType.CHECKING,
-                request.getCurrency() != null ? request.getCurrency() : Currency.TRY,
-                request.getInitialBalance() != null ? request.getInitialBalance() : BigDecimal.ZERO
+                request.getCurrency() != null ? request.getCurrency() : Currency.TRY
         );
 
         audit(userId, username, role, AuditAction.ACCOUNT_CREATED, "ACCOUNT", account.getId().toString(),
@@ -139,7 +190,5 @@ public class AccountController {
         private AccountType accountType;
 
         private Currency currency;
-
-        private BigDecimal initialBalance;
     }
 }

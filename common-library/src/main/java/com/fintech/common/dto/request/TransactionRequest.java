@@ -20,7 +20,6 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class TransactionRequest {
 
-    @NotNull(message = "Gönderen hesap ID zorunludur")
     private Long sourceAccountId;
 
     private Long targetAccountId;
@@ -40,5 +39,7 @@ public class TransactionRequest {
     private String description;
 
     /** İdempotent işlemler için benzersiz anahtar */
+    @NotBlank(message = "Idempotency anahtarı zorunludur")
+    @Size(max = 100, message = "Idempotency anahtarı en fazla 100 karakter olabilir")
     private String idempotencyKey;
 }

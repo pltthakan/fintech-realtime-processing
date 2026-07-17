@@ -25,6 +25,8 @@ CREATE TABLE account_service.accounts (
     currency        VARCHAR(3)    NOT NULL DEFAULT 'TRY',
     balance         NUMERIC(15,2) NOT NULL DEFAULT 0.00,
     daily_limit     NUMERIC(15,2) NOT NULL DEFAULT 50000.00,
+    daily_spent     NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+    daily_spent_date DATE,
     status          VARCHAR(20)   NOT NULL DEFAULT 'ACTIVE',
     created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
@@ -57,3 +59,43 @@ CREATE TABLE account_service.outbox_events (
 
 CREATE INDEX idx_account_outbox_pending
     ON account_service.outbox_events (status, created_at);
+
+CREATE TABLE account_service.ledger_transactions (
+    id                  UUID PRIMARY KEY,
+    reference_number    VARCHAR(100) NOT NULL UNIQUE,
+    transaction_type    VARCHAR(20) NOT NULL,
+    currency            VARCHAR(3) NOT NULL,
+    total_amount        NUMERIC(15,2) NOT NULL,
+    status              VARCHAR(20) NOT NULL DEFAULT 'POSTED',
+    posted_at           TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE account_service.ledger_entries (
+    id                      UUID PRIMARY KEY,
+    ledger_transaction_id   UUID NOT NULL REFERENCES account_service.ledger_transactions(id),
+    account_id              BIGINT REFERENCES account_service.accounts(id),
+    account_code            VARCHAR(100) NOT NULL,
+    direction               VARCHAR(10) NOT NULL,
+    amount                  NUMERIC(15,2) NOT NULL,
+    currency                VARCHAR(3) NOT NULL,
+    balance_after           NUMERIC(15,2),
+    created_at              TIMESTAMPTZ NOT NULL,
+    CONSTRAINT uq_ledger_entry_side UNIQUE (ledger_transaction_id, account_code, direction)
+);
+
+CREATE INDEX idx_ledger_entries_account
+    ON account_service.ledger_entries (account_id, created_at DESC);
+
+CREATE OR REPLACE FUNCTION account_service.prevent_ledger_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'Ledger records are immutable';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_ledger_transactions_immutable
+    BEFORE UPDATE OR DELETE ON account_service.ledger_transactions
+    FOR EACH ROW EXECUTE FUNCTION account_service.prevent_ledger_mutation();
+CREATE TRIGGER trg_ledger_entries_immutable
+    BEFORE UPDATE OR DELETE ON account_service.ledger_entries
+    FOR EACH ROW EXECUTE FUNCTION account_service.prevent_ledger_mutation();

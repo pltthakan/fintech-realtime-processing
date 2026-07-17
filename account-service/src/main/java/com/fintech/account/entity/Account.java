@@ -10,6 +10,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 
 @Entity
 @Table(name = "accounts", schema = "account_service")
@@ -50,6 +51,13 @@ public class Account {
     @Column(name = "daily_limit", nullable = false, precision = 15, scale = 2)
     @Builder.Default
     private BigDecimal dailyLimit = new BigDecimal("50000.00");
+
+    @Column(name = "daily_spent", nullable = false, precision = 15, scale = 2)
+    @Builder.Default
+    private BigDecimal dailySpent = BigDecimal.ZERO;
+
+    @Column(name = "daily_spent_date")
+    private LocalDate dailySpentDate;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)

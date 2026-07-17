@@ -40,7 +40,7 @@ public class TransactionController {
             @RequestHeader("X-User-Role") String role,
             HttpServletRequest httpRequest) {
 
-        TransactionResponse response = transactionService.createTransaction(request, userId, username);
+        TransactionResponse response = transactionService.createTransaction(request, userId, username, role);
         audit(userId, username, role, AuditAction.TRANSACTION_CREATED, "TRANSACTION", response.getTransactionId(),
                 "POST", httpRequest, "type=" + response.getType());
         return ResponseEntity

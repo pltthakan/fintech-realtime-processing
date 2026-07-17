@@ -9,13 +9,16 @@ import com.fintech.fraud.repository.FraudRuleRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.*;
 
 @Slf4j
@@ -30,12 +33,31 @@ public class FraudCheckService {
 
     private static final short SUSPICIOUS_THRESHOLD = 40;
     private static final short BLOCK_THRESHOLD = 70;
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Europe/Istanbul");
+    private static final DefaultRedisScript<Long> DAILY_AMOUNT_SCRIPT = new DefaultRedisScript<>("""
+            local created = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[2])
+            if created then
+                local total = redis.call('INCRBY', KEYS[2], ARGV[1])
+                redis.call('EXPIRE', KEYS[2], ARGV[2])
+                return total
+            end
+            local existing = redis.call('GET', KEYS[2])
+            if existing then return tonumber(existing) end
+            return 0
+            """, Long.class);
 
     /**
      * Tüm fraud kurallarını çalıştır ve sonuç döndür.
      */
     @Transactional
     public FraudCheckResult performFraudCheck(TransactionEvent event) {
+        UUID transactionId = UUID.fromString(event.getTransactionId());
+        Optional<FraudCheckResult> existing = fraudCheckResultRepository.findByTransactionId(transactionId);
+        if (existing.isPresent()) {
+            log.info("Fraud sonucu daha önce hesaplanmış - txId: {}", event.getTransactionId());
+            return existing.get();
+        }
+
         long startTime = System.currentTimeMillis();
         short totalScore = 0;
         List<Map<String, Object>> matchedRulesList = new ArrayList<>();
@@ -51,9 +73,10 @@ public class FraudCheckService {
         } else {
             // 2. Aktif kuralları yükle ve uygula
             List<FraudRule> activeRules = fraudRuleRepository.findByIsActiveTrue();
+            BigDecimal dailyAmount = trackDailyAmount(event);
 
             for (FraudRule rule : activeRules) {
-                short ruleScore = evaluateRule(rule, event);
+                short ruleScore = evaluateRule(rule, event, dailyAmount);
                 if (ruleScore > 0) {
                     totalScore = (short) Math.min(totalScore + ruleScore, 100);
                     matchedRulesList.add(Map.of(
@@ -88,7 +111,7 @@ public class FraudCheckService {
         matchedRulesMap.put("totalScore", (int) totalScore);
 
         FraudCheckResult result = FraudCheckResult.builder()
-                .transactionId(UUID.fromString(event.getTransactionId()))
+                .transactionId(transactionId)
                 .totalRiskScore(totalScore)
                 .isSuspicious(isSuspicious)
                 .isBlocked(isBlocked)
@@ -130,11 +153,11 @@ public class FraudCheckService {
     /**
      * Kural motoru - her kuralı değerlendir
      */
-    private short evaluateRule(FraudRule rule, TransactionEvent event) {
+    private short evaluateRule(FraudRule rule, TransactionEvent event, BigDecimal dailyAmount) {
         Map<String, Object> condition = rule.getConditionJson();
 
         return switch (rule.getRuleType()) {
-            case "AMOUNT" -> evaluateAmountRule(condition, event, rule.getRiskWeight());
+            case "AMOUNT" -> evaluateAmountRule(condition, event, dailyAmount, rule.getRiskWeight());
             case "PATTERN" -> evaluatePatternRule(condition, event, rule.getRiskWeight());
             default -> 0;
         };
@@ -143,7 +166,8 @@ public class FraudCheckService {
     /**
      * Tutar bazlı kural kontrolü
      */
-    private short evaluateAmountRule(Map<String, Object> condition, TransactionEvent event, short weight) {
+    private short evaluateAmountRule(
+            Map<String, Object> condition, TransactionEvent event, BigDecimal dailyAmount, short weight) {
         if (condition.containsKey("max_amount")) {
             double maxAmount = ((Number) condition.get("max_amount")).doubleValue();
             if (event.getAmount().compareTo(BigDecimal.valueOf(maxAmount)) > 0) {
@@ -152,9 +176,9 @@ public class FraudCheckService {
             }
         }
         if (condition.containsKey("daily_max_amount")) {
-            double dailyMax = ((Number) condition.get("daily_max_amount")).doubleValue();
-            if (event.getAmount().compareTo(BigDecimal.valueOf(dailyMax)) > 0) {
-                log.debug("DAILY_LIMIT kuralı tetiklendi: {} > {}", event.getAmount(), dailyMax);
+            BigDecimal dailyMax = new BigDecimal(condition.get("daily_max_amount").toString());
+            if (dailyAmount.compareTo(dailyMax) > 0) {
+                log.debug("DAILY_LIMIT kuralı tetiklendi: günlük toplam {} > {}", dailyAmount, dailyMax);
                 return weight;
             }
         }
@@ -209,5 +233,38 @@ public class FraudCheckService {
         }
 
         return 0;
+    }
+
+    /**
+     * Aynı event yeniden teslim edilse bile günlük toplama yalnızca bir kez ekler.
+     * Tutarlar Redis'te floating point yerine kuruş/cent olarak atomik INCRBY ile tutulur.
+     */
+    private BigDecimal trackDailyAmount(TransactionEvent event) {
+        Long accountId = event.getSourceAccountId() != null
+                ? event.getSourceAccountId() : event.getTargetAccountId();
+        if (accountId == null || event.getAmount() == null) {
+            return event.getAmount() == null ? BigDecimal.ZERO : event.getAmount();
+        }
+
+        try {
+            long minorUnits = event.getAmount().movePointRight(2).longValueExact();
+            LocalDate day = LocalDate.now(BUSINESS_ZONE);
+            ZonedDateTime now = ZonedDateTime.now(BUSINESS_ZONE);
+            long ttlSeconds = Math.max(60,
+                    Duration.between(now, day.plusDays(1).atStartOfDay(BUSINESS_ZONE).plusHours(1)).toSeconds());
+            String namespace = accountId + ":" + event.getCurrency() + ":" + day;
+            Long totalMinor = redisTemplate.execute(
+                    DAILY_AMOUNT_SCRIPT,
+                    List.of(
+                            "fraud:daily:seen:" + namespace + ":" + event.getTransactionId(),
+                            "fraud:daily:amount:" + namespace),
+                    String.valueOf(minorUnits),
+                    String.valueOf(ttlSeconds));
+            return BigDecimal.valueOf(totalMinor == null ? minorUnits : totalMinor, 2);
+        } catch (Exception exception) {
+            log.error("Redis günlük tutar kontrolü hatası; mevcut işlem tutarıyla devam ediliyor: {}",
+                    exception.getMessage());
+            return event.getAmount();
+        }
     }
 }

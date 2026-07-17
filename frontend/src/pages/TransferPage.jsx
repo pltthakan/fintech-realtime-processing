@@ -13,7 +13,7 @@ export default function TransferPage() {
   const [accounts, setAccounts] = useState([]);
   const [form, setForm] = useState({
     sourceAccountId: '', targetAccountId: '',
-    amount: '', currency: 'TRY', type: 'TRANSFER', description: '',
+    amount: '', type: 'TRANSFER', description: '',
   });
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
@@ -33,6 +33,8 @@ export default function TransferPage() {
       }
     })();
   }, [user]);
+
+  const sourceAccount = accounts.find(account => String(account.id) === form.sourceAccountId);
 
   const handleSubmit = async () => {
     setError('');
@@ -55,7 +57,7 @@ export default function TransferPage() {
         targetAccountId: (form.type === 'DEPOSIT') ? Number(form.sourceAccountId) :
             (form.type === 'TRANSFER' && form.targetAccountId) ? Number(form.targetAccountId) : null,
         amount: Number(form.amount),
-        currency: form.currency,
+        currency: sourceAccount.currency,
         type: form.type,
         description: form.description || null,
         idempotencyKey: `txn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -96,7 +98,7 @@ export default function TransferPage() {
 
           <div className="flex gap-3 justify-center">
             <button
-                onClick={() => { setResult(null); setForm({ sourceAccountId: '', targetAccountId: '', amount: '', currency: 'TRY', type: 'TRANSFER', description: '' }); }}
+                onClick={() => { setResult(null); setForm({ sourceAccountId: '', targetAccountId: '', amount: '', type: 'TRANSFER', description: '' }); }}
                 className="px-6 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors cursor-pointer"
             >
               Yeni İşlem
@@ -118,7 +120,7 @@ export default function TransferPage() {
         <div className="animate-fade-in">
           <div className="mb-7">
             <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Yeni İşlem</h1>
-            <p className="text-sm text-slate-500 mt-1">Transfer, ödeme, para yatırma veya çekme işlemi başlatın</p>
+            <p className="text-sm text-slate-500 mt-1">Transfer, ödeme veya para çekme işlemi başlatın</p>
           </div>
           <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center max-w-lg">
             <h3 className="text-lg font-bold text-slate-800 mb-2">Hesap bulunamadı</h3>
@@ -139,7 +141,7 @@ export default function TransferPage() {
       <div className="animate-fade-in">
         <div className="mb-7">
           <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Yeni İşlem</h1>
-          <p className="text-sm text-slate-500 mt-1">Transfer, ödeme, para yatırma veya çekme işlemi başlatın</p>
+          <p className="text-sm text-slate-500 mt-1">Transfer, ödeme veya para çekme işlemi başlatın</p>
         </div>
 
         <div className="max-w-lg bg-white rounded-2xl p-7 border border-slate-200">
@@ -150,8 +152,8 @@ export default function TransferPage() {
           {/* İşlem Türü */}
           <div className="mb-5">
             <label className="block text-sm font-semibold text-slate-700 mb-2">İşlem Türü</label>
-            <div className="grid grid-cols-4 gap-2">
-              {Object.entries(TX_TYPE_CONFIG).map(([key, conf]) => (
+            <div className="grid grid-cols-3 gap-2">
+              {Object.entries(TX_TYPE_CONFIG).filter(([key]) => key !== 'DEPOSIT').map(([key, conf]) => (
                   <button
                       key={key}
                       onClick={() => set('type', key)}
@@ -171,7 +173,11 @@ export default function TransferPage() {
           {/* Kaynak Hesap */}
           <div className="mb-4">
             <label className="block text-sm font-semibold text-slate-700 mb-1.5">Kaynak Hesap *</label>
-            <select value={form.sourceAccountId} onChange={e => set('sourceAccountId', e.target.value)}
+            <select value={form.sourceAccountId} onChange={e => setForm(prev => ({
+              ...prev,
+              sourceAccountId: e.target.value,
+              targetAccountId: '',
+            }))}
                     className="w-full px-3.5 py-2.5 rounded-lg border-[1.5px] border-slate-200 bg-slate-50 text-sm outline-none pr-9 appearance-none cursor-pointer">
               <option value="">Hesap seçin...</option>
               {accounts.map(a => (
@@ -189,7 +195,8 @@ export default function TransferPage() {
                 <select value={form.targetAccountId} onChange={e => set('targetAccountId', e.target.value)}
                         className="w-full px-3.5 py-2.5 rounded-lg border-[1.5px] border-slate-200 bg-slate-50 text-sm outline-none pr-9 appearance-none cursor-pointer">
                   <option value="">Hesap seçin...</option>
-                  {accounts.filter(a => String(a.id) !== form.sourceAccountId).map(a => (
+                  {accounts.filter(a => String(a.id) !== form.sourceAccountId
+                      && (!sourceAccount || a.currency === sourceAccount.currency)).map(a => (
                       <option key={a.id} value={a.id}>
                         {a.accountName} — {a.accountNumber}
                       </option>
@@ -208,13 +215,9 @@ export default function TransferPage() {
             </div>
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-1.5">Birim</label>
-              <select value={form.currency} onChange={e => set('currency', e.target.value)}
-                      className="w-full px-3 py-2.5 rounded-lg border-[1.5px] border-slate-200 bg-slate-50 text-sm outline-none pr-9 appearance-none cursor-pointer">
-                <option value="TRY">₺ TRY</option>
-                <option value="USD">$ USD</option>
-                <option value="EUR">€ EUR</option>
-                <option value="GBP">£ GBP</option>
-              </select>
+              <div className="w-full px-3 py-2.5 rounded-lg border-[1.5px] border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700">
+                {sourceAccount?.currency || '—'}
+              </div>
             </div>
           </div>
 

@@ -25,13 +25,21 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.math.BigDecimal;
+import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class TransactionService {
+
+    private static final Map<TransactionStatus, Set<TransactionStatus>> ALLOWED_TRANSITIONS = buildTransitions();
 
     private final TransactionRepository transactionRepository;
     private final TransactionStatusHistoryRepository statusHistoryRepository;
@@ -42,17 +50,16 @@ public class TransactionService {
      * Pipeline: transaction-raw → Fraud Service (B)
      */
     @Transactional
-    public TransactionResponse createTransaction(TransactionRequest request, Long userId, String username) {
+    public TransactionResponse createTransaction(
+            TransactionRequest request, Long userId, String username, String role) {
 
-        validateSourceAccountOwnership(request, userId);
+        validateTransactionRequest(request, userId, role);
 
         // 1. İdempotency kontrolü
-        if (request.getIdempotencyKey() != null) {
-            transactionRepository.findByIdempotencyKey(request.getIdempotencyKey())
-                    .ifPresent(existing -> {
-                        throw new DuplicateTransactionException(request.getIdempotencyKey());
-                    });
-        }
+        transactionRepository.findByIdempotencyKey(request.getIdempotencyKey())
+                .ifPresent(existing -> {
+                    throw new DuplicateTransactionException(request.getIdempotencyKey());
+                });
 
         // 2. Transaction oluştur ve DB'ye kaydet
         Transaction transaction = Transaction.builder()
@@ -92,6 +99,7 @@ public class TransactionService {
                 .idempotencyKey(transaction.getIdempotencyKey())
                 .userId(userId)
                 .username(username)
+                .initiatorRole(role)
                 .rawTimestamp(Instant.now())
                 .validatedTimestamp(Instant.now())
                 .build();
@@ -116,10 +124,15 @@ public class TransactionService {
      */
     @Transactional
     public void updateTransactionStatus(UUID transactionId, TransactionStatus newStatus, String serviceName, String message) {
-        Transaction transaction = transactionRepository.findById(transactionId)
+        Transaction transaction = transactionRepository.findByIdWithLock(transactionId)
                 .orElseThrow(() -> new ResourceNotFoundException("İşlem", "id", transactionId));
 
         TransactionStatus oldStatus = transaction.getStatus();
+        if (oldStatus == newStatus) {
+            log.info("İşlem durumu zaten uygulanmış - txId: {}, status: {}", transactionId, newStatus);
+            return;
+        }
+        validateStatusTransition(oldStatus, newStatus);
         transaction.setStatus(newStatus);
 
         if (newStatus == TransactionStatus.COMPLETED) {
@@ -161,23 +174,108 @@ public class TransactionService {
         return statusHistoryRepository.findByTransactionIdOrderByCreatedAtAsc(transactionId);
     }
 
-    private void validateSourceAccountOwnership(TransactionRequest request, Long userId) {
+    private void validateTransactionRequest(TransactionRequest request, Long userId, String role) {
         if (userId == null || userId <= 0) {
             throw new ForbiddenException();
         }
 
-        Long accountId = request.getType() == TransactionType.DEPOSIT
-                ? request.getTargetAccountId()
-                : request.getSourceAccountId();
-
-        if (accountId == null) {
-            throw new BusinessException("İşlem için sahip olunan hesap belirtilmelidir",
-                    "ACCOUNT_REQUIRED", HttpStatus.BAD_REQUEST);
+        if (request.getIdempotencyKey() == null || request.getIdempotencyKey().isBlank()) {
+            throw badRequest("Idempotency anahtarı zorunludur", "IDEMPOTENCY_KEY_REQUIRED");
+        }
+        if (request.getAmount() == null || request.getAmount().compareTo(BigDecimal.ZERO) <= 0
+                || request.getAmount().scale() > 2) {
+            throw badRequest("Tutar pozitif ve en fazla iki ondalıklı olmalıdır", "INVALID_AMOUNT");
+        }
+        if (request.getCurrency() == null || request.getType() == null) {
+            throw badRequest("Para birimi ve işlem tipi zorunludur", "TRANSACTION_FIELDS_REQUIRED");
         }
 
+        switch (request.getType()) {
+            case TRANSFER -> {
+                requireAccount(request.getSourceAccountId(), "Kaynak hesap zorunludur");
+                requireAccount(request.getTargetAccountId(), "Hedef hesap zorunludur");
+                if (Objects.equals(request.getSourceAccountId(), request.getTargetAccountId())) {
+                    throw badRequest("Kaynak ve hedef hesap aynı olamaz", "SAME_ACCOUNT_TRANSFER");
+                }
+                validateOwnedActiveAccount(request.getSourceAccountId(), userId, request);
+                validateActiveAccount(request.getTargetAccountId(), request);
+            }
+            case PAYMENT, WITHDRAWAL -> {
+                requireAccount(request.getSourceAccountId(), "Kaynak hesap zorunludur");
+                requireAbsent(request.getTargetAccountId(), "Bu işlem tipi hedef hesap kabul etmez");
+                validateOwnedActiveAccount(request.getSourceAccountId(), userId, request);
+            }
+            case DEPOSIT -> {
+                if (!isAdministrator(role)) {
+                    throw new BusinessException("Para yatırma yalnızca yetkili fonlama kanalından yapılabilir",
+                            "DEPOSIT_REQUIRES_ADMIN", HttpStatus.FORBIDDEN);
+                }
+                requireAbsent(request.getSourceAccountId(), "Para yatırmada kaynak hesap gönderilmemelidir");
+                requireAccount(request.getTargetAccountId(), "Hedef hesap zorunludur");
+                validateActiveAccount(request.getTargetAccountId(), request);
+            }
+        }
+    }
+
+    private void validateOwnedActiveAccount(Long accountId, Long userId, TransactionRequest request) {
         if (!transactionRepository.existsAccountOwnedBy(accountId, userId)) {
             throw new ForbiddenException();
         }
+        validateActiveAccount(accountId, request);
+    }
+
+    private void validateActiveAccount(Long accountId, TransactionRequest request) {
+        if (!transactionRepository.existsAccount(accountId)) {
+            throw new ResourceNotFoundException("Hesap", "id", accountId);
+        }
+        if (!transactionRepository.existsActiveAccountWithCurrency(accountId, request.getCurrency().name())) {
+            throw badRequest("Hesap aktif olmalı ve işlem para birimiyle eşleşmelidir",
+                    "ACCOUNT_CURRENCY_OR_STATUS_MISMATCH");
+        }
+    }
+
+    private void requireAccount(Long accountId, String message) {
+        if (accountId == null || accountId <= 0) {
+            throw badRequest(message, "ACCOUNT_REQUIRED");
+        }
+    }
+
+    private void requireAbsent(Long accountId, String message) {
+        if (accountId != null) {
+            throw badRequest(message, "UNEXPECTED_ACCOUNT");
+        }
+    }
+
+    private BusinessException badRequest(String message, String code) {
+        return new BusinessException(message, code, HttpStatus.BAD_REQUEST);
+    }
+
+    private void validateStatusTransition(TransactionStatus current, TransactionStatus next) {
+        if (!ALLOWED_TRANSITIONS.getOrDefault(current, Set.of()).contains(next)) {
+            throw new BusinessException(
+                    "Geçersiz işlem durumu geçişi: " + current + " → " + next,
+                    "INVALID_STATUS_TRANSITION",
+                    HttpStatus.CONFLICT);
+        }
+    }
+
+    private static Map<TransactionStatus, Set<TransactionStatus>> buildTransitions() {
+        Map<TransactionStatus, Set<TransactionStatus>> transitions = new EnumMap<>(TransactionStatus.class);
+        transitions.put(TransactionStatus.PENDING,
+                EnumSet.of(TransactionStatus.VALIDATED, TransactionStatus.FAILED, TransactionStatus.CANCELLED));
+        transitions.put(TransactionStatus.VALIDATED,
+                EnumSet.of(TransactionStatus.FRAUD_CHECK, TransactionStatus.CHECKED,
+                        TransactionStatus.BLOCKED, TransactionStatus.FAILED, TransactionStatus.CANCELLED));
+        transitions.put(TransactionStatus.FRAUD_CHECK,
+                EnumSet.of(TransactionStatus.CHECKED, TransactionStatus.BLOCKED, TransactionStatus.FAILED));
+        transitions.put(TransactionStatus.CHECKED,
+                EnumSet.of(TransactionStatus.PROCESSING, TransactionStatus.PROCESSED,
+                        TransactionStatus.FAILED, TransactionStatus.CANCELLED));
+        transitions.put(TransactionStatus.PROCESSING,
+                EnumSet.of(TransactionStatus.PROCESSED, TransactionStatus.FAILED));
+        transitions.put(TransactionStatus.PROCESSED,
+                EnumSet.of(TransactionStatus.COMPLETED, TransactionStatus.FAILED));
+        return Map.copyOf(transitions);
     }
 
     private void validateTransactionOwnership(Transaction transaction, Long authenticatedUserId, String role) {

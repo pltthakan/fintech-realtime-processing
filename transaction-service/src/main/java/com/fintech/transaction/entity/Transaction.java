@@ -85,4 +85,8 @@ public class Transaction {
 
     @Column(name = "completed_at")
     private Instant completedAt;
+
+    @Version
+    @Column(nullable = false)
+    private Long version;
 }
