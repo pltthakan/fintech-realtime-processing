@@ -304,6 +304,27 @@ Because outbox delivery is intentionally at-least-once, downstream consumers mus
 
 ---
 
+## Automated tests and CI
+
+The account money-transfer path has Testcontainers integration coverage with real PostgreSQL 16 and Kafka containers. The tests verify that:
+
+* a transfer debits and credits the correct accounts;
+* duplicate Kafka delivery changes balances only once;
+* the consumer inbox and outbox are committed with the balance update;
+* the next `transaction-checked` event is published through Kafka;
+* insufficient balance rolls back the database transaction and routes the event to `transaction-dlq`.
+
+Docker must be running to execute the integration suite locally:
+
+```bash
+mvn -f common-library/pom.xml install
+mvn -f account-service/pom.xml verify
+```
+
+The GitHub Actions workflow in `.github/workflows/ci.yml` runs all backend tests, the Testcontainers transfer scenarios, the frontend production build, and Docker Compose validation on every push and pull request. Test reports are uploaded as workflow artifacts even when a backend test fails.
+
+---
+
 # Database Design
 
 ## PostgreSQL
