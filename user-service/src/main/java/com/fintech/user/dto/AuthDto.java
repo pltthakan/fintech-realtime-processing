@@ -55,7 +55,6 @@ public class AuthDto {
     @AllArgsConstructor
     public static class TokenResponse {
         private String accessToken;
-        private String refreshToken;
         private String tokenType;
         private Long expiresIn;
         private UserInfo user;
@@ -74,11 +73,4 @@ public class AuthDto {
         private String role;
     }
 
-    @Data
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class RefreshTokenRequest {
-        @NotBlank(message = "Refresh token zorunludur")
-        private String refreshToken;
-    }
 }

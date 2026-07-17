@@ -6,7 +6,7 @@ The system processes financial transactions through an event-driven pipeline tha
 
 ## Local configuration
 
-Copy `.env.example` to `.env` and replace every password and `JWT_SECRET` before starting the stack. `.env` is intentionally ignored by Git.
+Copy `.env.example` to `.env` and replace every password, `JWT_ACCESS_SECRET`, and `JWT_REFRESH_SECRET` before starting the stack. Access and refresh secrets must be different. `.env` is intentionally ignored by Git.
 
 The Docker Compose defaults expose only the frontend, API gateway, and local-only operational interfaces. Internal microservices, databases, and brokers are reachable only on the Docker network.
 
@@ -85,6 +85,7 @@ The project uses a Kafka topic pipeline where each microservice is responsible f
 * Eureka-based service discovery
 * API Gateway routing with Spring Cloud Gateway
 * Immutable audit trail for account and transaction access/changes
+* Rotating refresh tokens with reuse detection and server-side revocation
 * Docker Compose environment for all services
 * Kafka UI for topic monitoring
 
@@ -137,7 +138,8 @@ Responsibilities:
 
 * Single entry point for the frontend
 * Route requests to microservices
-* Future support for rate limiting, JWT validation, and logging
+* Validate access-token signature, issuer, audience, type, and required roles
+* Apply Redis-backed request rate limiting
 
 ---
 
@@ -148,12 +150,31 @@ Port: `8081`
 Responsibilities:
 
 * User registration and authentication
-* JWT token generation
+* Short-lived access JWT and rotating refresh-token families
+* HttpOnly refresh cookie, hashed token persistence, reuse detection, and logout revocation
 * Role-based access control
 
 Database schema:
 
 * `user_service`
+
+### Access and refresh token security
+
+Access and refresh tokens have separate responsibilities and signing secrets:
+
+* Access tokens expire after 15 minutes by default and are the only tokens accepted by the API Gateway.
+* Refresh tokens expire after 7 days by default and are sent only in an `HttpOnly`, `SameSite` cookie. They are never returned in the JSON body or stored in browser storage.
+* JWT validation requires the expected signature, issuer, audience, `tokenType`, and expiration. Every generated token also carries a unique token ID (`jti`).
+* Only a SHA-256 hash of each refresh token is stored in PostgreSQL.
+* Every refresh rotates the token. Reusing an already rotated token revokes the complete token family, limiting damage from a stolen token.
+* Logout revokes the current refresh-token family and clears the cookie.
+* The frontend coalesces concurrent refresh attempts so parallel `401` responses do not race the one-time token rotation.
+
+Use different, long random values for `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET`. For HTTPS production deployments, set `AUTH_REFRESH_COOKIE_SECURE=true`. Existing PostgreSQL volumes must be upgraded before the new user-service version starts:
+
+```bash
+./manage.sh migrate
+```
 
 ---
 
@@ -341,6 +362,7 @@ Schemas:
 Example tables:
 
 * `users`
+* `refresh_tokens`
 * `accounts`
 * `transactions`
 * `fraud_checks`

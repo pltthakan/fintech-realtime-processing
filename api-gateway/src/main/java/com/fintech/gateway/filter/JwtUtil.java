@@ -9,47 +9,54 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
-import java.util.Date;
 
 @Component
 public class JwtUtil {
 
-    @Value("${jwt.secret}")
-    private String secret;
+    private static final String TOKEN_TYPE_CLAIM = "tokenType";
+    private static final String ACCESS_TOKEN_TYPE = "access";
 
-    private SecretKey key;
+    @Value("${jwt.access-secret}")
+    private String accessSecret;
+
+    @Value("${jwt.issuer}")
+    private String issuer;
+
+    @Value("${jwt.audience}")
+    private String audience;
+
+    private SecretKey accessKey;
 
     @PostConstruct
     public void init() {
-        this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        accessKey = Keys.hmacShaKeyFor(accessSecret.getBytes(StandardCharsets.UTF_8));
     }
 
-    public Claims extractAllClaims(String token) {
+    /**
+     * Gateway yalnızca access token kabul eder. İmza, expiry, issuer, audience
+     * ve tokenType tek parse işleminde doğrulanır.
+     */
+    public Claims parseAccessToken(String token) {
         return Jwts.parser()
-                .verifyWith(key)
+                .verifyWith(accessKey)
+                .requireIssuer(issuer)
+                .requireAudience(audience)
+                .require(TOKEN_TYPE_CLAIM, ACCESS_TOKEN_TYPE)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
     }
 
-    public boolean isTokenValid(String token) {
-        try {
-            Claims claims = extractAllClaims(token);
-            return !claims.getExpiration().before(new Date());
-        } catch (Exception e) {
-            return false;
-        }
+    public String extractUsername(Claims claims) {
+        return claims.getSubject();
     }
 
-    public String extractUsername(String token) {
-        return extractAllClaims(token).getSubject();
+    public String extractRole(Claims claims) {
+        return claims.get("role", String.class);
     }
 
-    public String extractRole(String token) {
-        return extractAllClaims(token).get("role", String.class);
-    }
-
-    public Long extractUserId(String token) {
-        return extractAllClaims(token).get("userId", Long.class);
+    public Long extractUserId(Claims claims) {
+        Number userId = claims.get("userId", Number.class);
+        return userId != null ? userId.longValue() : null;
     }
 }

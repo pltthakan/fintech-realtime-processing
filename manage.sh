@@ -158,6 +158,9 @@ migrate_database() {
     docker compose -f $COMPOSE_FILE exec -T postgresql sh -c \
         'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/04-add-reliable-event-processing.sql'
 
+    docker compose -f $COMPOSE_FILE exec -T postgresql sh -c \
+        'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/05-add-refresh-token-security.sql'
+
     docker compose -f $COMPOSE_FILE exec -T mongodb sh -c \
         'mongosh --quiet --authenticationDatabase admin --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" "$MONGO_INITDB_DATABASE" --file /docker-entrypoint-initdb.d/02-align-completed-transaction-schema.js'
 
