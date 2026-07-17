@@ -152,7 +152,9 @@ eureka:
 # JWT
 # ============================================
 jwt:
-  secret: ${JWT_SECRET}
+  access-secret: ${JWT_ACCESS_SECRET:${JWT_SECRET}}
+  issuer: ${JWT_ISSUER:fintech-user-service}
+  audience: ${JWT_AUDIENCE:fintech-api}
 
 # ============================================
 # RESILIENCE4J (Circuit Breaker)

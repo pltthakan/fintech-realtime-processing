@@ -1,5 +1,7 @@
 package com.fintech.gateway.filter;
 
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
@@ -47,19 +49,22 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
 
             String token = authHeader.substring(7);
 
-            // Token doğrulama
-            if (!jwtUtil.isTokenValid(token)) {
+            Claims claims;
+            try {
+                claims = jwtUtil.parseAccessToken(token);
+            } catch (JwtException | IllegalArgumentException exception) {
                 return onError(exchange, "Token geçersiz veya süresi dolmuş", HttpStatus.UNAUTHORIZED);
             }
 
-            Long userId = jwtUtil.extractUserId(token);
-            if (userId == null) {
+            Long userId = jwtUtil.extractUserId(claims);
+            String username = jwtUtil.extractUsername(claims);
+            String userRole = jwtUtil.extractRole(claims);
+            if (userId == null || username == null || username.isBlank() || userRole == null) {
                 return onError(exchange, "Token kullanıcı kimliği içermiyor", HttpStatus.UNAUTHORIZED);
             }
 
             // Rol bazlı erişim kontrolü
             if (config.getRequiredRoles() != null && !config.getRequiredRoles().isEmpty()) {
-                String userRole = jwtUtil.extractRole(token);
                 if (!config.getRequiredRoles().contains(userRole)) {
                     return onError(exchange, "Bu kaynağa erişim yetkiniz yok", HttpStatus.FORBIDDEN);
                 }
@@ -78,8 +83,8 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
                         headers.remove("X-Client-Ip");
                         headers.remove("X-Forwarded-For");
                         headers.set("X-User-Id", String.valueOf(userId));
-                        headers.set("X-User-Name", jwtUtil.extractUsername(token));
-                        headers.set("X-User-Role", jwtUtil.extractRole(token));
+                        headers.set("X-User-Name", username);
+                        headers.set("X-User-Role", userRole);
                         if (clientIp != null) {
                             headers.set("X-Client-Ip", clientIp);
                         }
@@ -87,8 +92,8 @@ public class AuthenticationFilter extends AbstractGatewayFilterFactory<Authentic
                     .build();
 
             log.info("İstek doğrulandı - User: {}, Role: {}, Path: {}",
-                    jwtUtil.extractUsername(token),
-                    jwtUtil.extractRole(token),
+                    username,
+                    userRole,
                     request.getPath());
 
             return chain.filter(exchange.mutate().request(modifiedRequest).build());

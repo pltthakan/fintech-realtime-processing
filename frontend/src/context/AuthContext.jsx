@@ -24,8 +24,8 @@ export function AuthProvider({ children }) {
 
   const login = async (usernameOrEmail, password) => {
     const res = await authService.login({ usernameOrEmail, password });
-    const { accessToken, refreshToken, user: userData } = res.data.data;
-    const authData = { accessToken, refreshToken, user: userData };
+    const { accessToken, user: userData } = res.data.data;
+    const authData = { accessToken, user: userData };
     sessionStorage.setItem('fintech_auth', JSON.stringify(authData));
     setUser(userData);
     toast.success(`Hoş geldin, ${userData.firstName || userData.username}!`);
@@ -34,18 +34,22 @@ export function AuthProvider({ children }) {
 
   const register = async (data) => {
     const res = await authService.register(data);
-    const { accessToken, refreshToken, user: userData } = res.data.data;
-    const authData = { accessToken, refreshToken, user: userData };
+    const { accessToken, user: userData } = res.data.data;
+    const authData = { accessToken, user: userData };
     sessionStorage.setItem('fintech_auth', JSON.stringify(authData));
     setUser(userData);
     toast.success('Kayıt başarılı!');
     return userData;
   };
 
-  const logout = () => {
-    sessionStorage.removeItem('fintech_auth');
-    setUser(null);
-    toast.success('Çıkış yapıldı');
+  const logout = async () => {
+    try {
+      await authService.logout();
+    } finally {
+      sessionStorage.removeItem('fintech_auth');
+      setUser(null);
+      toast.success('Çıkış yapıldı');
+    }
   };
 
   const isAdmin = user?.role === 'ADMIN';

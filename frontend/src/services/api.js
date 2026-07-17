@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 // Vite proxy /api → http://localhost:8087
 const api = axios.create({
   baseURL: '/api/v1',
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -21,25 +22,34 @@ api.interceptors.request.use(
     (error) => Promise.reject(error)
 );
 
+let refreshRequest = null;
+
 // ── Response interceptor: 401 → refresh token dene ──
 api.interceptors.response.use(
     (response) => response,
     async (error) => {
       const originalRequest = error.config;
 
-      if (error.response?.status === 401 && !originalRequest._retry) {
+      const isAuthRequest = originalRequest?.url?.includes('/auth/');
+      if (originalRequest && error.response?.status === 401 && !originalRequest._retry && !isAuthRequest) {
         originalRequest._retry = true;
 
         const auth = JSON.parse(sessionStorage.getItem('fintech_auth') || 'null');
-        if (auth?.refreshToken) {
+        if (auth?.accessToken) {
           try {
-            const res = await axios.post('/api/v1/auth/refresh-token', {
-              refreshToken: auth.refreshToken,
-            });
+            if (!refreshRequest) {
+              refreshRequest = axios.post(
+                  '/api/v1/auth/refresh-token',
+                  {},
+                  { withCredentials: true }
+              ).finally(() => {
+                refreshRequest = null;
+              });
+            }
+            const res = await refreshRequest;
             const newAuth = {
               ...auth,
               accessToken: res.data.data.accessToken,
-              refreshToken: res.data.data.refreshToken,
             };
             sessionStorage.setItem('fintech_auth', JSON.stringify(newAuth));
             originalRequest.headers.Authorization = `Bearer ${newAuth.accessToken}`;
@@ -71,7 +81,8 @@ api.interceptors.response.use(
 export const authService = {
   login: (data) => api.post('/auth/login', data),
   register: (data) => api.post('/auth/register', data),
-  refreshToken: (data) => api.post('/auth/refresh-token', data),
+  refreshToken: () => api.post('/auth/refresh-token', {}),
+  logout: () => api.post('/auth/logout', {}),
 };
 
 export const userService = {
