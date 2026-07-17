@@ -43,6 +43,7 @@ public class TransactionEvent {
     // ── Kullanıcı Bilgileri ──
     private Long userId;
     private String username;
+    private String initiatorRole;
 
     // ── Fraud Kontrol Sonuçları (B servisi doldurur) ──
     private Short fraudScore;

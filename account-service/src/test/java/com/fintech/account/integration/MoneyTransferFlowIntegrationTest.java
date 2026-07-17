@@ -2,6 +2,7 @@ package com.fintech.account.integration;
 
 import com.fintech.account.entity.Account;
 import com.fintech.account.repository.AccountRepository;
+import com.fintech.account.service.LedgerService;
 import com.fintech.common.enums.AccountStatus;
 import com.fintech.common.enums.AccountType;
 import com.fintech.common.enums.Currency;
@@ -47,6 +48,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 @Testcontainers
@@ -91,6 +93,9 @@ class MoneyTransferFlowIntegrationTest {
 
     @Autowired
     private KafkaTemplate<String, String> kafkaTemplate;
+
+    @Autowired
+    private LedgerService ledgerService;
 
     @DynamicPropertySource
     static void registerContainerProperties(DynamicPropertyRegistry registry) {
@@ -137,12 +142,23 @@ class MoneyTransferFlowIntegrationTest {
             assertThat(countProcessedEvents(transactionId)).isEqualTo(1);
             assertThat(countOutboxEvents(transactionId)).isEqualTo(1);
             assertThat(outboxStatus(transactionId)).isEqualTo("PUBLISHED");
+            assertThat(countLedgerTransactions(transactionId)).isEqualTo(1);
+            assertThat(countLedgerEntries(transactionId)).isEqualTo(2);
+            assertThat(ledgerTotal(transactionId, "DEBIT")).isEqualByComparingTo("125.50");
+            assertThat(ledgerTotal(transactionId, "CREDIT")).isEqualByComparingTo("125.50");
         });
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE account_service.ledger_entries SET amount = 1 WHERE ledger_transaction_id = ?::uuid",
+                transactionId))
+                .hasMessageContaining("Ledger records are immutable");
 
         TransactionEvent checkedEvent = consumeEvent(
                 KafkaTopics.TRANSACTION_CHECKED, transactionId, Duration.ofSeconds(15));
         assertThat(checkedEvent.getStatus()).isEqualTo(TransactionStatus.PROCESSED);
         assertThat(checkedEvent.getAmount()).isEqualByComparingTo("125.50");
+        assertThat(ledgerService.reconcile(accountRepository.findById(source.getId()).orElseThrow()).isReconciled())
+                .isTrue();
     }
 
     @Test
@@ -170,6 +186,34 @@ class MoneyTransferFlowIntegrationTest {
                 .isEqualByComparingTo("20.00");
         assertThat(countProcessedEvents(transactionId)).isZero();
         assertThat(countOutboxEvents(transactionId)).isZero();
+        assertThat(countLedgerTransactions(transactionId)).isZero();
+    }
+
+    @Test
+    void dailyLimitExceededRollsBackBalanceUsageLedgerAndInbox() throws Exception {
+        long ownerId = 300L;
+        Account source = createAccount(ownerId, "500.00");
+        source.setDailyLimit(new BigDecimal("100.00"));
+        accountRepository.saveAndFlush(source);
+        Account target = createAccount(301L, "20.00");
+        String transactionId = UUID.randomUUID().toString();
+
+        TransactionEvent event = transferEvent(
+                transactionId, ownerId, source.getId(), target.getId(), "100.01");
+        kafkaTemplate.send(KafkaTopics.TRANSACTION_VALIDATED, transactionId, JsonUtil.toJson(event))
+                .get(10, TimeUnit.SECONDS);
+
+        TransactionEvent deadLetterEvent = consumeEvent(
+                KafkaTopics.TRANSACTION_DLQ, transactionId, Duration.ofSeconds(20));
+        assertThat(deadLetterEvent.getTransactionId()).isEqualTo(transactionId);
+
+        Account persistedSource = accountRepository.findById(source.getId()).orElseThrow();
+        assertThat(persistedSource.getBalance()).isEqualByComparingTo("500.00");
+        assertThat(persistedSource.getDailySpent()).isEqualByComparingTo("0.00");
+        assertThat(accountRepository.findById(target.getId()).orElseThrow().getBalance())
+                .isEqualByComparingTo("20.00");
+        assertThat(countProcessedEvents(transactionId)).isZero();
+        assertThat(countLedgerTransactions(transactionId)).isZero();
     }
 
     private Account createAccount(Long userId, String balance) {
@@ -182,6 +226,7 @@ class MoneyTransferFlowIntegrationTest {
                 .currency(Currency.TRY)
                 .balance(new BigDecimal(balance))
                 .dailyLimit(new BigDecimal("50000.00"))
+                .dailySpent(BigDecimal.ZERO)
                 .status(AccountStatus.ACTIVE)
                 .build());
     }
@@ -268,6 +313,29 @@ class MoneyTransferFlowIntegrationTest {
                 "SELECT status FROM account_service.outbox_events WHERE aggregate_id = ?",
                 String.class,
                 transactionId);
+    }
+
+    private int countLedgerTransactions(String transactionId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM account_service.ledger_transactions WHERE id = ?::uuid",
+                Integer.class,
+                transactionId);
+    }
+
+    private int countLedgerEntries(String transactionId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM account_service.ledger_entries WHERE ledger_transaction_id = ?::uuid",
+                Integer.class,
+                transactionId);
+    }
+
+    private BigDecimal ledgerTotal(String transactionId, String direction) {
+        return jdbcTemplate.queryForObject(
+                "SELECT COALESCE(SUM(amount), 0) FROM account_service.ledger_entries "
+                        + "WHERE ledger_transaction_id = ?::uuid AND direction = ?",
+                BigDecimal.class,
+                transactionId,
+                direction);
     }
 
     private static AdminClient adminClient() {

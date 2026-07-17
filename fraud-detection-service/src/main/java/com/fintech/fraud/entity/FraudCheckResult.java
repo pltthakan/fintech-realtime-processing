@@ -23,7 +23,7 @@ public class FraudCheckResult {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "transaction_id", nullable = false)
+    @Column(name = "transaction_id", nullable = false, unique = true)
     private UUID transactionId;
 
     @Column(name = "total_risk_score", nullable = false)

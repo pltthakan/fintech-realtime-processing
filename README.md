@@ -86,6 +86,10 @@ The project uses a Kafka topic pipeline where each microservice is responsible f
 * API Gateway routing with Spring Cloud Gateway
 * Immutable audit trail for account and transaction access/changes
 * Rotating refresh tokens with reuse detection and server-side revocation
+* Mandatory request idempotency and type-aware money-movement validation
+* Enforced per-account daily spending limits and locked transaction state transitions
+* Immutable double-entry ledger with account reconciliation APIs
+* Idempotent Redis daily fraud aggregates using integer minor units
 * Docker Compose environment for all services
 * Kafka UI for topic monitoring
 
@@ -95,7 +99,7 @@ The project uses a Kafka topic pipeline where each microservice is responsible f
 
 ## Backend
 
-* Java 21
+* Java 17
 * Spring Boot
 * Spring Cloud Gateway
 * Spring Security
@@ -185,21 +189,30 @@ Port: `8082`
 Responsibilities:
 
 * Update account balances
-* Process transfer operations
-* Persist account and transaction information
+* Enforce ownership, account status, currency, balance, and daily-limit invariants
+* Lock transfer accounts in deterministic order to prevent concurrent deadlocks
+* Atomically persist balances, consumer inbox claims, outbox events, and balanced ledger journals
 * Store account/transaction audit records in `audit_service.audit_logs`
 
 Consumes:
 
-* `transaction-checked`
+* `transaction-validated`
 
 Produces:
 
-* `transaction-processed`
+* `transaction-checked`
 
 Database schema:
 
 * `account_service`
+
+### Ledger and reconciliation APIs
+
+Every posted money movement creates one immutable journal with equal debit and credit totals. The database rejects ledger updates and deletes; no mutation endpoint is exposed.
+
+* `GET /api/v1/accounts/{accountId}/ledger` lists the authenticated owner's account entries.
+* `GET /api/v1/accounts/ledger/transactions/{transactionId}` returns both journal sides and calculated debit/credit totals.
+* `GET /api/v1/accounts/{accountId}/reconciliation` compares the operational balance with the latest ledger balance.
 
 ### Audit log API
 
@@ -216,7 +229,9 @@ Port: `8083`
 Responsibilities:
 
 * Receive transaction requests
-* Perform initial validation
+* Require an idempotency key and apply type-specific source/target account rules
+* Reject same-account transfers, inactive/currency-mismatched accounts, and user-created deposits
+* Enforce a locked state machine so duplicate events are no-ops and invalid status regressions fail
 * Publish transaction events to Kafka
 
 Produces:
@@ -237,7 +252,8 @@ Responsibilities:
 
 * Fraud and AML checks
 * Detect suspicious transaction behavior
-* Validate transaction amount and frequency
+* Validate single transaction amount and frequency
+* Track daily account totals atomically and idempotently in Redis
 
 Consumes:
 
@@ -245,7 +261,7 @@ Consumes:
 
 Produces:
 
-* `transaction-checked`
+* `transaction-validated`
 
 Database schema:
 
@@ -264,10 +280,11 @@ Responsibilities:
 
 Consumes:
 
-* `transaction-processed`
+* `transaction-checked`
 
 Produces:
 
+* `transaction-processed`
 * `transaction-completed`
 
 ---
@@ -320,8 +337,20 @@ The money-movement path uses the Transactional Outbox and Consumer Inbox pattern
 * Duplicate Kafka deliveries are ignored by the `(consumer_name, event_id)` primary key, so a balance operation is applied once.
 * Outbox publishers wait for Kafka acknowledgement before marking an event `PUBLISHED`. Failed sends stay `PENDING` and are retried.
 * Account consumer failures are retried and then published to `transaction-dlq` instead of being swallowed.
+* Fraud and transaction-status consumers also propagate failures to Kafka retry/DLQ handling; a logged exception is never treated as successful processing.
 
 Because outbox delivery is intentionally at-least-once, downstream consumers must also be idempotent when they perform non-repeatable side effects.
+
+## Financial domain integrity
+
+The money path applies defense in depth in the request DTO, transaction service, account service, and PostgreSQL constraints:
+
+* API-created accounts always start with zero balance. Demo and migrated opening balances receive balanced ledger opening journals.
+* `TRANSFER` requires two different accounts; `PAYMENT` and `WITHDRAWAL` require only a source; `DEPOSIT` requires only a target and an `ADMIN` initiator.
+* Both sides of a transfer must be active and use the transaction currency. Cross-currency transfer without an FX leg is rejected.
+* Outgoing amounts consume the account's Istanbul-business-day limit in the same transaction as the balance update.
+* Ledger posting, balance mutation, consumer inbox claim, and account outbox creation commit or roll back together.
+* Transaction statuses follow explicit allowed transitions under a pessimistic database lock. Repeated status events are idempotent.
 
 ---
 
@@ -334,6 +363,10 @@ The account money-transfer path has Testcontainers integration coverage with rea
 * the consumer inbox and outbox are committed with the balance update;
 * the next `transaction-checked` event is published through Kafka;
 * insufficient balance rolls back the database transaction and routes the event to `transaction-dlq`.
+* daily-limit violations roll back balance, daily usage, inbox, outbox, and ledger together;
+* every transfer produces exactly two immutable ledger entries with equal debit and credit totals;
+* client-created deposits, same-account transfers, and out-of-order status regressions are rejected;
+* fraud daily rules evaluate an idempotent Redis aggregate rather than one transaction in isolation.
 
 Docker must be running to execute the integration suite locally:
 
@@ -365,7 +398,11 @@ Example tables:
 * `refresh_tokens`
 * `accounts`
 * `transactions`
-* `fraud_checks`
+* `fraud_check_results`
+* `ledger_transactions`
+* `ledger_entries`
+* `processed_events`
+* `outbox_events`
 
 ---
 
@@ -528,4 +565,4 @@ http://localhost:8080
 
 # Example Resume Description
 
-Developed a real-time fintech transaction processing platform using Spring Boot microservices, Apache Kafka, PostgreSQL, MongoDB, Redis, RabbitMQ, and Docker. Designed an event-driven Kafka topic pipeline for fraud detection, balance processing, notifications, and transaction archiving.
+Developed a real-time fintech transaction platform with Spring Boot microservices, Kafka, PostgreSQL, Redis, MongoDB, RabbitMQ, and Docker. Implemented transactional outbox/consumer idempotency, secure refresh-token rotation, enforced financial invariants and daily limits, an immutable double-entry ledger with reconciliation APIs, retry/DLQ handling, and Testcontainers-based end-to-end transfer tests executed in GitHub Actions CI.

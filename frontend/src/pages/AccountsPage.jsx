@@ -82,6 +82,9 @@ export default function AccountsPage() {
                               <div>
                                 <p className="text-[11px] text-slate-400 mb-0.5">Günlük Limit</p>
                                 <p className="text-sm font-bold text-slate-800">{formatMoney(acc.dailyLimit, acc.currency)}</p>
+                                <p className="text-[11px] text-slate-400 mt-1">
+                                  Kullanılan: {formatMoney(acc.dailySpent || 0, acc.currency)}
+                                </p>
                               </div>
                               <div>
                                 <p className="text-[11px] text-slate-400 mb-0.5">Hesap ID</p>
@@ -126,7 +129,6 @@ function CreateAccountModal({ onClose, onCreated }) {
     accountName: '',
     accountType: 'CHECKING',
     currency: 'TRY',
-    initialBalance: '0',
   });
   const [loading, setLoading] = useState(false);
 
@@ -139,7 +141,6 @@ function CreateAccountModal({ onClose, onCreated }) {
         accountName: form.accountName || null,
         accountType: form.accountType,
         currency: form.currency,
-        initialBalance: Number(form.initialBalance) || 0,
       });
       toast.success('Hesap başarıyla oluşturuldu!');
       onCreated();
@@ -192,16 +193,8 @@ function CreateAccountModal({ onClose, onCreated }) {
             </div>
           </div>
 
-          <div className="mb-6">
-            <label className="block text-sm font-semibold text-slate-700 mb-1.5">Başlangıç Bakiyesi</label>
-            <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={form.initialBalance}
-                onChange={e => set('initialBalance', e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-lg border-[1.5px] border-slate-200 bg-slate-50 text-sm outline-none font-mono"
-            />
+          <div className="mb-6 rounded-lg bg-blue-50 px-3.5 py-3 text-xs leading-relaxed text-blue-700">
+            Finansal güvenlik gereği yeni hesaplar sıfır bakiye ile açılır. Bakiye yalnızca yetkili para hareketleriyle değişir.
           </div>
 
           <div className="flex gap-3">

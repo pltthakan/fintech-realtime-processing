@@ -11,6 +11,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Collection;
 
 @Repository
 public interface AccountRepository extends JpaRepository<Account, Long> {
@@ -19,6 +20,11 @@ public interface AccountRepository extends JpaRepository<Account, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT a FROM Account a WHERE a.id = :id")
     Optional<Account> findByIdWithLock(@Param("id") Long id);
+
+    /** Karşılıklı transferlerde deadlock oluşmaması için hesapları sabit sırada kilitler. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT a FROM Account a WHERE a.id IN :ids ORDER BY a.id")
+    List<Account> findAllByIdWithLock(@Param("ids") Collection<Long> ids);
 
     Optional<Account> findByAccountNumber(String accountNumber);
 

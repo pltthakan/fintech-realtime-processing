@@ -11,12 +11,18 @@ import com.fintech.common.exception.AccountFrozenException;
 import com.fintech.common.exception.ForbiddenException;
 import com.fintech.common.exception.InsufficientBalanceException;
 import com.fintech.common.exception.ResourceNotFoundException;
+import com.fintech.common.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -26,14 +32,17 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AccountService {
 
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Europe/Istanbul");
+
     private final AccountRepository accountRepository;
+    private final LedgerService ledgerService;
 
     /**
      * Yeni hesap oluştur.
      */
     @Transactional
     public Account createAccount(Long userId, String accountName, AccountType accountType,
-                                 Currency currency, BigDecimal initialBalance) {
+                                 Currency currency) {
         // IBAN benzeri hesap numarası üret
         String accountNumber = generateAccountNumber();
 
@@ -43,8 +52,9 @@ public class AccountService {
                 .accountName(accountName != null ? accountName : getDefaultAccountName(accountType, currency))
                 .accountType(accountType)
                 .currency(currency)
-                .balance(initialBalance != null ? initialBalance : BigDecimal.ZERO)
+                .balance(BigDecimal.ZERO)
                 .dailyLimit(getDefaultDailyLimit(accountType))
+                .dailySpent(BigDecimal.ZERO)
                 .status(AccountStatus.ACTIVE)
                 .build();
 
@@ -84,6 +94,7 @@ public class AccountService {
      */
     @Transactional
     public void processBalanceUpdate(TransactionEvent event) {
+        validateEvent(event);
         TransactionType type = event.getType();
 
         switch (type) {
@@ -95,21 +106,27 @@ public class AccountService {
     }
 
     private void processTransfer(TransactionEvent event) {
-        Account source = accountRepository.findByIdWithLock(event.getSourceAccountId())
-                .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getSourceAccountId()));
+        Map<Long, Account> accounts = accountRepository.findAllByIdWithLock(
+                        List.of(event.getSourceAccountId(), event.getTargetAccountId()))
+                .stream()
+                .collect(Collectors.toMap(Account::getId, Function.identity()));
+        Account source = requireAccount(accounts, event.getSourceAccountId());
+        Account target = requireAccount(accounts, event.getTargetAccountId());
+
         validateEventOwnership(source, event);
         validateAccount(source);
-        validateBalance(source, event.getAmount());
-
-        Account target = accountRepository.findByIdWithLock(event.getTargetAccountId())
-                .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getTargetAccountId()));
         validateAccount(target);
+        validateCurrency(source, event);
+        validateCurrency(target, event);
+        validateBalance(source, event.getAmount());
+        applyDailyLimit(source, event.getAmount());
 
         source.setBalance(source.getBalance().subtract(event.getAmount()));
         target.setBalance(target.getBalance().add(event.getAmount()));
 
         accountRepository.save(source);
         accountRepository.save(target);
+        ledgerService.post(event, source, target);
 
         log.info("Transfer tamamlandı - kaynak: {} ({} → {}), hedef: {} ({} → {})",
                 source.getAccountNumber(),
@@ -123,8 +140,10 @@ public class AccountService {
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getTargetAccountId()));
         validateEventOwnership(account, event);
         validateAccount(account);
+        validateCurrency(account, event);
         account.setBalance(account.getBalance().add(event.getAmount()));
         accountRepository.save(account);
+        ledgerService.post(event, null, account);
         log.info("Para yatırma tamamlandı - hesap: {}, yeni bakiye: {}",
                 account.getAccountNumber(), account.getBalance());
     }
@@ -134,9 +153,12 @@ public class AccountService {
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getSourceAccountId()));
         validateEventOwnership(account, event);
         validateAccount(account);
+        validateCurrency(account, event);
         validateBalance(account, event.getAmount());
+        applyDailyLimit(account, event.getAmount());
         account.setBalance(account.getBalance().subtract(event.getAmount()));
         accountRepository.save(account);
+        ledgerService.post(event, account, null);
         log.info("Para çekme tamamlandı - hesap: {}, yeni bakiye: {}",
                 account.getAccountNumber(), account.getBalance());
     }
@@ -146,9 +168,12 @@ public class AccountService {
                 .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getSourceAccountId()));
         validateEventOwnership(account, event);
         validateAccount(account);
+        validateCurrency(account, event);
         validateBalance(account, event.getAmount());
+        applyDailyLimit(account, event.getAmount());
         account.setBalance(account.getBalance().subtract(event.getAmount()));
         accountRepository.save(account);
+        ledgerService.post(event, account, null);
         log.info("Ödeme tamamlandı - hesap: {}, yeni bakiye: {}",
                 account.getAccountNumber(), account.getBalance());
     }
@@ -168,7 +193,77 @@ public class AccountService {
         }
     }
 
+    private void applyDailyLimit(Account account, BigDecimal amount) {
+        LocalDate today = LocalDate.now(BUSINESS_ZONE);
+        BigDecimal spent = account.getDailySpent();
+        if (!today.equals(account.getDailySpentDate())) {
+            spent = BigDecimal.ZERO;
+            account.setDailySpentDate(today);
+        }
+        if (spent == null) {
+            spent = BigDecimal.ZERO;
+        }
+
+        BigDecimal updated = spent.add(amount);
+        if (updated.compareTo(account.getDailyLimit()) > 0) {
+            throw new BusinessException(
+                    "Günlük işlem limiti aşıldı. Limit: " + account.getDailyLimit() + " " + account.getCurrency(),
+                    "DAILY_LIMIT_EXCEEDED",
+                    org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY);
+        }
+        account.setDailySpent(updated);
+    }
+
+    private void validateEvent(TransactionEvent event) {
+        if (event == null || event.getTransactionId() == null || event.getTransactionId().isBlank()
+                || event.getType() == null || event.getCurrency() == null || event.getAmount() == null
+                || event.getAmount().compareTo(BigDecimal.ZERO) <= 0 || event.getAmount().scale() > 2) {
+            throw new BusinessException("Geçersiz finansal işlem olayı", "INVALID_TRANSACTION_EVENT");
+        }
+
+        switch (event.getType()) {
+            case TRANSFER -> {
+                if (event.getSourceAccountId() == null || event.getTargetAccountId() == null
+                        || Objects.equals(event.getSourceAccountId(), event.getTargetAccountId())) {
+                    throw new BusinessException("Transfer farklı kaynak ve hedef hesap gerektirir", "INVALID_TRANSFER_ACCOUNTS");
+                }
+            }
+            case PAYMENT, WITHDRAWAL -> {
+                if (event.getSourceAccountId() == null || event.getTargetAccountId() != null) {
+                    throw new BusinessException("Bu işlem yalnızca kaynak hesap gerektirir", "INVALID_TRANSACTION_ACCOUNTS");
+                }
+            }
+            case DEPOSIT -> {
+                if (event.getSourceAccountId() != null || event.getTargetAccountId() == null) {
+                    throw new BusinessException("Para yatırma yalnızca hedef hesap gerektirir", "INVALID_DEPOSIT_ACCOUNTS");
+                }
+                if (!"ADMIN".equals(event.getInitiatorRole())) {
+                    throw new ForbiddenException();
+                }
+            }
+        }
+    }
+
+    private void validateCurrency(Account account, TransactionEvent event) {
+        if (account.getCurrency() != event.getCurrency()) {
+            throw new BusinessException(
+                    "Hesap para birimi işlem para birimiyle eşleşmiyor",
+                    "CURRENCY_MISMATCH");
+        }
+    }
+
+    private Account requireAccount(Map<Long, Account> accounts, Long id) {
+        Account account = accounts.get(id);
+        if (account == null) {
+            throw new ResourceNotFoundException("Hesap", "id", id);
+        }
+        return account;
+    }
+
     private void validateEventOwnership(Account account, TransactionEvent event) {
+        if (event.getType() == TransactionType.DEPOSIT && "ADMIN".equals(event.getInitiatorRole())) {
+            return;
+        }
         if (event.getUserId() == null || !Objects.equals(account.getUserId(), event.getUserId())) {
             throw new ForbiddenException();
         }

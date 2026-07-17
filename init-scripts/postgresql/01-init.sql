@@ -79,6 +79,8 @@ CREATE TABLE account_service.accounts (
     currency          VARCHAR(3)   NOT NULL DEFAULT 'TRY',
     balance           NUMERIC(15,2) NOT NULL DEFAULT 0.00,
     daily_limit       NUMERIC(15,2) NOT NULL DEFAULT 50000.00,
+    daily_spent       NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+    daily_spent_date  DATE,
     status            VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE',
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
@@ -86,7 +88,9 @@ CREATE TABLE account_service.accounts (
     CONSTRAINT chk_account_type   CHECK (account_type IN ('CHECKING', 'SAVINGS', 'INVESTMENT')),
     CONSTRAINT chk_currency       CHECK (currency     IN ('TRY', 'USD', 'EUR', 'GBP')),
     CONSTRAINT chk_account_status CHECK (status       IN ('ACTIVE', 'FROZEN', 'CLOSED')),
-    CONSTRAINT chk_balance_positive CHECK (balance    >= 0)
+    CONSTRAINT chk_balance_positive CHECK (balance    >= 0),
+    CONSTRAINT chk_daily_limit_positive CHECK (daily_limit >= 0),
+    CONSTRAINT chk_daily_spent_positive CHECK (daily_spent >= 0)
 );
 
 -- Account tablosu indexleri
@@ -121,6 +125,60 @@ CREATE TABLE account_service.outbox_events (
 CREATE INDEX idx_account_outbox_pending
     ON account_service.outbox_events (status, created_at);
 
+-- Bakiye tablosundan bağımsız, değiştirilemez çift taraflı muhasebe defteri.
+CREATE TABLE account_service.ledger_transactions (
+    id                  UUID PRIMARY KEY,
+    reference_number    VARCHAR(100) NOT NULL UNIQUE,
+    transaction_type    VARCHAR(20)  NOT NULL,
+    currency            VARCHAR(3)   NOT NULL,
+    total_amount        NUMERIC(15,2) NOT NULL,
+    status              VARCHAR(20)  NOT NULL DEFAULT 'POSTED',
+    posted_at           TIMESTAMPTZ  NOT NULL,
+    CONSTRAINT chk_ledger_tx_type CHECK (transaction_type IN ('TRANSFER', 'PAYMENT', 'DEPOSIT', 'WITHDRAWAL')),
+    CONSTRAINT chk_ledger_tx_currency CHECK (currency IN ('TRY', 'USD', 'EUR', 'GBP')),
+    CONSTRAINT chk_ledger_tx_amount CHECK (total_amount > 0),
+    CONSTRAINT chk_ledger_tx_status CHECK (status = 'POSTED')
+);
+
+CREATE TABLE account_service.ledger_entries (
+    id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    ledger_transaction_id   UUID NOT NULL REFERENCES account_service.ledger_transactions(id),
+    account_id              BIGINT REFERENCES account_service.accounts(id),
+    account_code            VARCHAR(100) NOT NULL,
+    direction               VARCHAR(10) NOT NULL,
+    amount                  NUMERIC(15,2) NOT NULL,
+    currency                VARCHAR(3) NOT NULL,
+    balance_after           NUMERIC(15,2),
+    created_at              TIMESTAMPTZ NOT NULL,
+    CONSTRAINT uq_ledger_entry_side UNIQUE (ledger_transaction_id, account_code, direction),
+    CONSTRAINT chk_ledger_direction CHECK (direction IN ('DEBIT', 'CREDIT')),
+    CONSTRAINT chk_ledger_entry_currency CHECK (currency IN ('TRY', 'USD', 'EUR', 'GBP')),
+    CONSTRAINT chk_ledger_entry_amount CHECK (amount > 0),
+    CONSTRAINT chk_ledger_account_reference CHECK (
+        (account_id IS NOT NULL AND account_code LIKE 'ACCOUNT:%') OR
+        (account_id IS NULL AND account_code LIKE 'SYSTEM:%')
+    )
+);
+
+CREATE INDEX idx_ledger_entries_account
+    ON account_service.ledger_entries (account_id, created_at DESC);
+CREATE INDEX idx_ledger_entries_transaction
+    ON account_service.ledger_entries (ledger_transaction_id);
+
+CREATE OR REPLACE FUNCTION account_service.prevent_ledger_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'Ledger records are immutable';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_ledger_transactions_immutable
+    BEFORE UPDATE OR DELETE ON account_service.ledger_transactions
+    FOR EACH ROW EXECUTE FUNCTION account_service.prevent_ledger_mutation();
+CREATE TRIGGER trg_ledger_entries_immutable
+    BEFORE UPDATE OR DELETE ON account_service.ledger_entries
+    FOR EACH ROW EXECUTE FUNCTION account_service.prevent_ledger_mutation();
+
 -- ============================================
 -- TRANSACTION SERVICE TABLOLARI
 -- ============================================
@@ -137,17 +195,23 @@ CREATE TABLE transaction_service.transactions (
     fraud_score         SMALLINT      DEFAULT 0,
     description         VARCHAR(255),
     reference_number    VARCHAR(50)   UNIQUE,
-    idempotency_key     VARCHAR(100)  UNIQUE,
+    idempotency_key     VARCHAR(100)  NOT NULL UNIQUE,
     error_message       VARCHAR(500),
     metadata            JSONB,
     created_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     completed_at        TIMESTAMPTZ,
+    version             BIGINT        NOT NULL DEFAULT 0,
 
     CONSTRAINT chk_tx_type   CHECK (type   IN ('TRANSFER', 'PAYMENT', 'DEPOSIT', 'WITHDRAWAL')),
     CONSTRAINT chk_tx_status CHECK (status IN ('PENDING', 'VALIDATED', 'FRAUD_CHECK', 'CHECKED', 'BLOCKED', 'PROCESSING', 'PROCESSED', 'COMPLETED', 'FAILED', 'CANCELLED')),
     CONSTRAINT chk_amount_positive CHECK (amount > 0),
-    CONSTRAINT chk_fraud_score     CHECK (fraud_score BETWEEN 0 AND 100)
+    CONSTRAINT chk_fraud_score     CHECK (fraud_score BETWEEN 0 AND 100),
+    CONSTRAINT chk_tx_account_shape CHECK (
+        (type = 'TRANSFER' AND source_account_id IS NOT NULL AND target_account_id IS NOT NULL AND source_account_id <> target_account_id) OR
+        (type IN ('PAYMENT', 'WITHDRAWAL') AND source_account_id IS NOT NULL AND target_account_id IS NULL) OR
+        (type = 'DEPOSIT' AND source_account_id IS NULL AND target_account_id IS NOT NULL)
+    )
 );
 
 -- Transaction tablosu indexleri
@@ -250,7 +314,7 @@ CREATE INDEX idx_blacklist_active ON fraud_service.blacklist (is_active);
 
 CREATE TABLE fraud_service.fraud_check_results (
     id                BIGSERIAL PRIMARY KEY,
-    transaction_id    UUID         NOT NULL,
+    transaction_id    UUID         NOT NULL UNIQUE,
     total_risk_score  SMALLINT     NOT NULL,
     is_suspicious     BOOLEAN      NOT NULL DEFAULT FALSE,
     is_blocked        BOOLEAN      NOT NULL DEFAULT FALSE,
@@ -287,6 +351,32 @@ INSERT INTO account_service.accounts (user_id, account_number, account_name, acc
 (3, 'TR330006100519786457841327', 'Dolar Hesabı',       'CHECKING', 'USD', 5000.00,  10000.00),
 (4, 'TR330006100519786457841328', 'Vadesiz TL Hesabı',  'CHECKING', 'TRY', 18000.00, 50000.00),
 (4, 'TR330006100519786457841329', 'Birikim Hesabı',     'SAVINGS',  'TRY', 75000.00, 25000.00);
+
+-- Demo/seed bakiyeleri de muhasebe defterinde dengeli bir açılış journal'ına sahiptir.
+DO $$
+DECLARE
+    account_row RECORD;
+    ledger_id UUID;
+BEGIN
+    FOR account_row IN
+        SELECT * FROM account_service.accounts WHERE balance > 0
+    LOOP
+        ledger_id := uuid_generate_v4();
+        INSERT INTO account_service.ledger_transactions
+            (id, reference_number, transaction_type, currency, total_amount, status, posted_at)
+        VALUES
+            (ledger_id, 'SEED-OPENING-' || account_row.id, 'DEPOSIT', account_row.currency,
+             account_row.balance, 'POSTED', NOW());
+        INSERT INTO account_service.ledger_entries
+            (ledger_transaction_id, account_id, account_code, direction, amount, currency, balance_after, created_at)
+        VALUES
+            (ledger_id, NULL, 'SYSTEM:OPENING_BALANCE', 'DEBIT', account_row.balance,
+             account_row.currency, NULL, NOW()),
+            (ledger_id, account_row.id, 'ACCOUNT:' || account_row.id, 'CREDIT', account_row.balance,
+             account_row.currency, account_row.balance, NOW());
+    END LOOP;
+END;
+$$;
 
 -- ============================================
 -- UPDATED_AT TRIGGER FONKSİYONU

@@ -27,19 +27,15 @@ public class TransactionEventListener {
      */
     @KafkaListener(topics = KafkaTopics.TRANSACTION_VALIDATED, groupId = "transaction-status-updater")
     public void onTransactionValidated(String message) {
-        try {
-            TransactionEvent event = JsonUtil.fromJson(message, TransactionEvent.class);
-            UUID txId = UUID.fromString(event.getTransactionId());
+        TransactionEvent event = JsonUtil.fromJson(message, TransactionEvent.class);
+        UUID txId = UUID.fromString(event.getTransactionId());
 
-            if (Boolean.TRUE.equals(event.getIsBlocked())) {
-                transactionService.updateTransactionStatus(txId, TransactionStatus.BLOCKED,
-                        "fraud-detection-service", "Fraud kontrolünde engellendi. Skor: " + event.getFraudScore());
-            } else {
-                transactionService.updateTransactionStatus(txId, TransactionStatus.CHECKED,
-                        "fraud-detection-service", "Fraud kontrolünden geçti. Skor: " + event.getFraudScore());
-            }
-        } catch (Exception e) {
-            log.error("Validated event işleme hatası: {}", e.getMessage());
+        if (Boolean.TRUE.equals(event.getIsBlocked())) {
+            transactionService.updateTransactionStatus(txId, TransactionStatus.BLOCKED,
+                    "fraud-detection-service", "Fraud kontrolünde engellendi. Skor: " + event.getFraudScore());
+        } else {
+            transactionService.updateTransactionStatus(txId, TransactionStatus.CHECKED,
+                    "fraud-detection-service", "Fraud kontrolünden geçti. Skor: " + event.getFraudScore());
         }
     }
 
@@ -48,14 +44,10 @@ public class TransactionEventListener {
      */
     @KafkaListener(topics = KafkaTopics.TRANSACTION_CHECKED, groupId = "transaction-status-updater")
     public void onTransactionChecked(String message) {
-        try {
-            TransactionEvent event = JsonUtil.fromJson(message, TransactionEvent.class);
-            UUID txId = UUID.fromString(event.getTransactionId());
-            transactionService.updateTransactionStatus(txId, TransactionStatus.PROCESSED,
-                    "account-service", "Bakiye güncellendi");
-        } catch (Exception e) {
-            log.error("Checked event işleme hatası: {}", e.getMessage());
-        }
+        TransactionEvent event = JsonUtil.fromJson(message, TransactionEvent.class);
+        UUID txId = UUID.fromString(event.getTransactionId());
+        transactionService.updateTransactionStatus(txId, TransactionStatus.PROCESSED,
+                "account-service", "Bakiye güncellendi");
     }
 
     /**
@@ -63,13 +55,9 @@ public class TransactionEventListener {
      */
     @KafkaListener(topics = KafkaTopics.TRANSACTION_PROCESSED, groupId = "transaction-status-updater")
     public void onTransactionProcessed(String message) {
-        try {
-            TransactionEvent event = JsonUtil.fromJson(message, TransactionEvent.class);
-            UUID txId = UUID.fromString(event.getTransactionId());
-            transactionService.updateTransactionStatus(txId, TransactionStatus.COMPLETED,
-                    "notification-service", "İşlem tamamlandı, bildirim gönderildi");
-        } catch (Exception e) {
-            log.error("Processed event işleme hatası: {}", e.getMessage());
-        }
+        TransactionEvent event = JsonUtil.fromJson(message, TransactionEvent.class);
+        UUID txId = UUID.fromString(event.getTransactionId());
+        transactionService.updateTransactionStatus(txId, TransactionStatus.COMPLETED,
+                "notification-service", "İşlem tamamlandı, bildirim gönderildi");
     }
 }
