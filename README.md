@@ -65,10 +65,12 @@ The pipeline resolves another platform user's IBAN as an atomic HAVALE. Transfer
 
 ## UI Preview
 
-<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 42 18" src="https://github.com/user-attachments/assets/659756db-98ad-430f-ae2b-8f6a1eb04728" />
+<img width="799" height="781" alt="Ekran Resmi 2026-07-18 12 40 47" src="https://github.com/user-attachments/assets/712aeebc-d9ac-4a8b-aa78-626169da5c38" />
 
 
-<img width="1470" height="956" alt="Ekran Resmi 2026-06-23 12 06 51" src="https://github.com/user-attachments/assets/e80a9188-6083-4e23-bf8c-df5f2ec3caae" />
+
+<img width="807" height="778" alt="Ekran Resmi 2026-07-18 09 39 49" src="https://github.com/user-attachments/assets/d8d0d659-1ce3-47c1-a5ae-dc08a00ed7d8" />
+
 
 
 <details>
@@ -83,9 +85,10 @@ The pipeline resolves another platform user's IBAN as an atomic HAVALE. Transfer
 
 
 ### New Transaction
-<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 47 26" src="https://github.com/user-attachments/assets/2801a10e-fd27-4c4d-831c-2099cebb0fa1" />
+<img width="647" height="779" alt="Ekran Resmi 2026-07-18 09 22 12" src="https://github.com/user-attachments/assets/56b9b13d-1ba7-47d8-ac64-e9689a43bf4b" />
 
-<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 47 14" src="https://github.com/user-attachments/assets/71f95c25-d0d0-4e3c-8588-69eb103550db" />
+<img width="1108" height="785" alt="Ekran Resmi 2026-07-18 08 48 35" src="https://github.com/user-attachments/assets/0c956924-ee05-4de6-b51d-2c770c6b8ae2" />
+
 
 ### Administrator tasks
 <img width="1470" height="956" alt="Ekran Resmi 2026-06-23 12 04 39" src="https://github.com/user-attachments/assets/4892d4ca-8fd6-47fb-9ae5-ee431647c366" />
@@ -618,19 +621,28 @@ http://localhost:8080
 
 ---
 
-## System Monitoring & Infrastructure
+## Runtime Infrastructure Evidence
 
 <details>
 <summary>View infrastructure dashboards</summary>
 
 ### Kafka UI
-<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 55 00" src="https://github.com/user-attachments/assets/9623d9ca-ddd3-48d2-b76e-c520da4240e4" />
+<img width="1419" height="782" alt="kafkaconnect" src="https://github.com/user-attachments/assets/dc13ee2b-709c-48fd-ae06-04756b64da64" />
+<img width="1413" height="786" alt="kafkatopics" src="https://github.com/user-attachments/assets/792d0645-c088-4ded-ab9a-e0e2217a21a8" />
+
+
 
 ### RabbitMQ
-<img width="1201" height="751" alt="Ekran Resmi 2026-04-13 00 59 48" src="https://github.com/user-attachments/assets/999b64fa-38cb-405a-9dbe-95f5e105364f" />
+<img width="1063" height="706" alt="rabbitmq" src="https://github.com/user-attachments/assets/65487182-0c93-499d-85b4-82b5c35d0200" />
+
 
 ### Eureka
 <img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 54 31" src="https://github.com/user-attachments/assets/64d9d3d5-d682-4c43-8bf8-c3640595897b" />
+<img width="1470" height="764" alt="Ekran Resmi 2026-07-18 12 32 34" src="https://github.com/user-attachments/assets/4907bc93-278a-4ed2-853f-0576a9924f8a" />
+
+<img width="802" height="785" alt="Ekran Resmi 2026-07-18 12 36 11" src="https://github.com/user-attachments/assets/faf3d8ac-53f6-44e5-b937-2a6d78624fa2" />
+
+### Redis — Fraud Velocity & Idempotent Aggregates
 
 </details>
 
