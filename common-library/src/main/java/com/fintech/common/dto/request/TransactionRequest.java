@@ -2,6 +2,7 @@ package com.fintech.common.dto.request;
 
 import com.fintech.common.enums.Currency;
 import com.fintech.common.enums.TransactionType;
+import com.fintech.common.enums.TransferRail;
 import jakarta.validation.constraints.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -23,6 +24,16 @@ public class TransactionRequest {
     private Long sourceAccountId;
 
     private Long targetAccountId;
+
+    /** IBAN ile başka hesaba transferlerde hedef hesabın kullanıcıya açık kimliği. */
+    @Size(max = 34, message = "IBAN en fazla 34 karakter olabilir")
+    private String beneficiaryIban;
+
+    @Size(max = 120, message = "Alıcı adı en fazla 120 karakter olabilir")
+    private String beneficiaryName;
+
+    /** İstemci değeri yalnızca önizlemedir; backend yönlendirmeyi yeniden hesaplar. */
+    private TransferRail transferRail;
 
     @NotNull(message = "Tutar zorunludur")
     @DecimalMin(value = "0.01", message = "Tutar 0'dan büyük olmalıdır")

@@ -101,6 +101,22 @@ spring:
                 redis-rate-limiter.requestedTokens: 1
 
         # ────────────────────────────────────────
+        # PAYMENT RAIL SERVICE (:8089)
+        # IBAN çözümleme ve Havale/EFT/FAST yönlendirme
+        # ────────────────────────────────────────
+        - id: payment-rail-service
+          uri: lb://payment-rail-service
+          predicates:
+            - Path=/api/v1/payment-rails/**
+          filters:
+            - name: AuthenticationFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                redis-rate-limiter.requestedTokens: 1
+
+        # ────────────────────────────────────────
         # FRAUD DETECTION SERVICE (:8084)
         # (Sadece ADMIN ve ANALYST erişebilir)
         # ────────────────────────────────────────

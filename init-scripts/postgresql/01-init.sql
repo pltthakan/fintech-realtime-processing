@@ -9,6 +9,7 @@ CREATE SCHEMA IF NOT EXISTS account_service;
 CREATE SCHEMA IF NOT EXISTS transaction_service;
 CREATE SCHEMA IF NOT EXISTS fraud_service;
 CREATE SCHEMA IF NOT EXISTS audit_service;
+CREATE SCHEMA IF NOT EXISTS payment_rail_service;
 
 -- UUID extension'ı etkinleştir
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -78,6 +79,7 @@ CREATE TABLE account_service.accounts (
     account_type      VARCHAR(20)  NOT NULL DEFAULT 'CHECKING',
     currency          VARCHAR(3)   NOT NULL DEFAULT 'TRY',
     balance           NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+    reserved_balance  NUMERIC(15,2) NOT NULL DEFAULT 0.00,
     daily_limit       NUMERIC(15,2) NOT NULL DEFAULT 50000.00,
     daily_spent       NUMERIC(15,2) NOT NULL DEFAULT 0.00,
     daily_spent_date  DATE,
@@ -90,7 +92,8 @@ CREATE TABLE account_service.accounts (
     CONSTRAINT chk_account_status CHECK (status       IN ('ACTIVE', 'FROZEN', 'CLOSED')),
     CONSTRAINT chk_balance_positive CHECK (balance    >= 0),
     CONSTRAINT chk_daily_limit_positive CHECK (daily_limit >= 0),
-    CONSTRAINT chk_daily_spent_positive CHECK (daily_spent >= 0)
+    CONSTRAINT chk_daily_spent_positive CHECK (daily_spent >= 0),
+    CONSTRAINT chk_reserved_balance CHECK (reserved_balance >= 0 AND reserved_balance <= balance)
 );
 
 -- Account tablosu indexleri
@@ -124,6 +127,23 @@ CREATE TABLE account_service.outbox_events (
 
 CREATE INDEX idx_account_outbox_pending
     ON account_service.outbox_events (status, created_at);
+
+CREATE TABLE account_service.fund_reservations (
+    transaction_id    UUID PRIMARY KEY,
+    account_id        BIGINT NOT NULL REFERENCES account_service.accounts(id),
+    amount            NUMERIC(15,2) NOT NULL,
+    currency          VARCHAR(3) NOT NULL,
+    status            VARCHAR(20) NOT NULL,
+    daily_spent_date  DATE NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_reservation_amount CHECK (amount > 0),
+    CONSTRAINT chk_reservation_currency CHECK (currency IN ('TRY', 'USD', 'EUR', 'GBP')),
+    CONSTRAINT chk_reservation_status CHECK (status IN ('RESERVED', 'SETTLED', 'RELEASED'))
+);
+
+CREATE INDEX idx_fund_reservations_account
+    ON account_service.fund_reservations (account_id, status);
 
 -- Bakiye tablosundan bağımsız, değiştirilemez çift taraflı muhasebe defteri.
 CREATE TABLE account_service.ledger_transactions (
@@ -188,6 +208,11 @@ CREATE TABLE transaction_service.transactions (
     user_id             BIGINT       NOT NULL,
     source_account_id   BIGINT,
     target_account_id   BIGINT,
+    beneficiary_iban    VARCHAR(34),
+    beneficiary_name    VARCHAR(120),
+    beneficiary_bank_code VARCHAR(10),
+    transfer_rail       VARCHAR(20),
+    external_reference  VARCHAR(80) UNIQUE,
     amount              NUMERIC(15,2) NOT NULL,
     currency            VARCHAR(3)    NOT NULL DEFAULT 'TRY',
     type                VARCHAR(20)   NOT NULL,
@@ -207,8 +232,12 @@ CREATE TABLE transaction_service.transactions (
     CONSTRAINT chk_tx_status CHECK (status IN ('PENDING', 'VALIDATED', 'FRAUD_CHECK', 'CHECKED', 'BLOCKED', 'PROCESSING', 'PROCESSED', 'COMPLETED', 'FAILED', 'CANCELLED')),
     CONSTRAINT chk_amount_positive CHECK (amount > 0),
     CONSTRAINT chk_fraud_score     CHECK (fraud_score BETWEEN 0 AND 100),
+    CONSTRAINT chk_transfer_rail CHECK (transfer_rail IS NULL OR transfer_rail IN ('INTERNAL', 'HAVALE', 'EFT', 'FAST')),
     CONSTRAINT chk_tx_account_shape CHECK (
-        (type = 'TRANSFER' AND source_account_id IS NOT NULL AND target_account_id IS NOT NULL AND source_account_id <> target_account_id) OR
+        (type = 'TRANSFER' AND source_account_id IS NOT NULL AND (
+            (target_account_id IS NOT NULL AND source_account_id <> target_account_id) OR
+            (target_account_id IS NULL AND beneficiary_iban IS NOT NULL AND transfer_rail IN ('EFT', 'FAST'))
+        )) OR
         (type IN ('PAYMENT', 'WITHDRAWAL') AND source_account_id IS NOT NULL AND target_account_id IS NULL) OR
         (type = 'DEPOSIT' AND source_account_id IS NULL AND target_account_id IS NOT NULL)
     )
@@ -222,6 +251,7 @@ CREATE INDEX idx_tx_status         ON transaction_service.transactions (status);
 CREATE INDEX idx_tx_type           ON transaction_service.transactions (type);
 CREATE INDEX idx_tx_created_at     ON transaction_service.transactions (created_at DESC);
 CREATE INDEX idx_tx_idempotency    ON transaction_service.transactions (idempotency_key);
+CREATE INDEX idx_tx_beneficiary_iban ON transaction_service.transactions (beneficiary_iban);
 
 -- Transaction durum geçmişi tablosu (her aşamayı kaydet)
 CREATE TABLE transaction_service.transaction_status_history (
@@ -253,6 +283,46 @@ CREATE TABLE transaction_service.outbox_events (
 
 CREATE INDEX idx_transaction_outbox_pending
     ON transaction_service.outbox_events (status, created_at);
+
+-- ============================================
+-- PAYMENT RAIL SERVICE TABLOLARI
+-- ============================================
+
+CREATE TABLE payment_rail_service.payment_rail_attempts (
+    id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    transaction_id          UUID NOT NULL UNIQUE,
+    external_reference      VARCHAR(80) NOT NULL UNIQUE,
+    rail                    VARCHAR(20) NOT NULL,
+    status                  VARCHAR(20) NOT NULL,
+    beneficiary_iban_hash   VARCHAR(64) NOT NULL,
+    beneficiary_iban_masked VARCHAR(40) NOT NULL,
+    amount                  NUMERIC(15,2) NOT NULL,
+    currency                VARCHAR(3) NOT NULL,
+    failure_reason          VARCHAR(255),
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_payment_rail CHECK (rail IN ('EFT', 'FAST')),
+    CONSTRAINT chk_payment_rail_status CHECK (status IN ('SETTLED', 'FAILED')),
+    CONSTRAINT chk_payment_rail_amount CHECK (amount > 0),
+    CONSTRAINT chk_payment_rail_currency CHECK (currency = 'TRY')
+);
+
+CREATE TABLE payment_rail_service.outbox_events (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    aggregate_id    VARCHAR(100) NOT NULL,
+    topic           VARCHAR(150) NOT NULL,
+    event_key       VARCHAR(150) NOT NULL,
+    payload         TEXT NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      VARCHAR(1000),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    published_at    TIMESTAMPTZ,
+    CONSTRAINT chk_payment_rail_outbox_status CHECK (status IN ('PENDING', 'PUBLISHED'))
+);
+
+CREATE INDEX idx_payment_rail_outbox_pending
+    ON payment_rail_service.outbox_events (status, created_at);
 
 -- ============================================
 -- AUDIT SERVICE TABLOLARI
@@ -348,9 +418,9 @@ INSERT INTO user_service.users (username, email, password_hash, first_name, last
 -- Test hesapları
 INSERT INTO account_service.accounts (user_id, account_number, account_name, account_type, currency, balance, daily_limit) VALUES
 (3, 'TR330006100519786457841326', 'Vadesiz TL Hesabı',  'CHECKING', 'TRY', 25000.00, 50000.00),
-(3, 'TR330006100519786457841327', 'Dolar Hesabı',       'CHECKING', 'USD', 5000.00,  10000.00),
-(4, 'TR330006100519786457841328', 'Vadesiz TL Hesabı',  'CHECKING', 'TRY', 18000.00, 50000.00),
-(4, 'TR330006100519786457841329', 'Birikim Hesabı',     'SAVINGS',  'TRY', 75000.00, 25000.00);
+(3, 'TR060006100519786457841327', 'Dolar Hesabı',       'CHECKING', 'USD', 5000.00,  10000.00),
+(4, 'TR760006100519786457841328', 'Vadesiz TL Hesabı',  'CHECKING', 'TRY', 18000.00, 50000.00),
+(4, 'TR490006100519786457841329', 'Birikim Hesabı',     'SAVINGS',  'TRY', 75000.00, 25000.00);
 
 -- Demo/seed bakiyeleri de muhasebe defterinde dengeli bir açılış journal'ına sahiptir.
 DO $$

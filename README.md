@@ -18,12 +18,48 @@ For an existing PostgreSQL volume, apply schema updates with `./manage.sh migrat
 
 # Architecture Overview
 
-<img width="514" height="763" alt="Ekran Resmi 2026-04-07 22 56 47" src="https://github.com/user-attachments/assets/fce92903-4ea0-4778-871d-c69f88955678" />
+```mermaid
+flowchart TB
+    FE[React Frontend :3000] --> GW[API Gateway :8080]
 
+    subgraph Docker[Docker Compose / fintech-network]
+        GW --> US[User Service :8081]
+        GW --> TS[Transaction Service :8083]
+        GW --> PR[Payment Rail Service :8089]
+        GW --> AS[Account Service :8082]
+        GW --> RS[Reporting Service :8086]
 
+        TS -->|transaction-raw| K[(Kafka)]
+        K --> FS[Fraud Detection :8084]
+        FS -->|transaction-validated| K
+        K --> AS
 
+        AS -->|INTERNAL / HAVALE\natomic debit + credit| LEDGER[Double-entry Ledger]
+        AS -->|EFT / FAST\nreserve available balance| K
+        K -->|funds-reserved| PR
+        PR -->|idempotent rail attempt\ntransactional outbox| K
+        K -->|transfer-rail-result| AS
+        AS -->|settle or release reservation| LEDGER
 
-The project uses a Kafka topic pipeline where each microservice is responsible for one stage of the transaction lifecycle.
+        AS -->|transaction-checked| K
+        K --> NS[Notification Service :8085]
+        NS --> RMQ[(RabbitMQ)]
+        NS -->|transaction-completed| K
+        K --> KC[Kafka Connect Sink]
+
+        GW -. service discovery .-> EU[Eureka :8761]
+        GW -. rate limit / session .-> REDIS[(Redis)]
+    end
+
+    TS --> PG[(PostgreSQL\nusers / accounts / transactions / ledger / outbox)]
+    AS --> PG
+    PR --> PG
+    FS --> PG
+    KC --> MONGO[(MongoDB\ncompleted transaction archive)]
+    RS --> MONGO
+```
+
+The pipeline resolves another platform user's IBAN as an atomic HAVALE. Transfers to an external bank reserve funds first; Payment Rail Service then simulates EFT/FAST execution idempotently, after which Account Service either settles the reservation into the ledger or releases it without losing money.
 
 ---
 
@@ -89,6 +125,10 @@ The project uses a Kafka topic pipeline where each microservice is responsible f
 * Mandatory request idempotency and type-aware money-movement validation
 * Enforced per-account daily spending limits and locked transaction state transitions
 * Immutable double-entry ledger with account reconciliation APIs
+* IBAN-based HAVALE/EFT/FAST routing with beneficiary verification
+* ISO 13616 MOD-97 validation and checksum-correct Turkish IBAN generation
+* Reserve-before-send external transfers with automatic release on rejection
+* Idempotent Payment Rail attempts with hashed and masked IBAN persistence
 * Idempotent Redis daily fraud aggregates using integer minor units
 * Docker Compose environment for all services
 * Kafka UI for topic monitoring
@@ -197,14 +237,18 @@ Responsibilities:
 Consumes:
 
 * `transaction-validated`
+* `transfer-rail-result`
 
 Produces:
 
 * `transaction-checked`
+* `funds-reserved`
 
 Database schema:
 
 * `account_service`
+
+For external EFT/FAST transfers, `balance` is not immediately debited. The amount is added to `reserved_balance`, which reduces `availableBalance`. A successful rail result settles the reservation and posts a balanced journal; a rejected result releases both the reservation and the consumed daily limit.
 
 ### Ledger and reconciliation APIs
 
@@ -269,6 +313,32 @@ Database schema:
 
 ---
 
+## Payment Rail Service
+
+Port: `8089`
+
+Responsibilities:
+
+* Resolve and mask IBAN beneficiaries before submission
+* Route internal-bank IBANs to HAVALE and external TRY transfers to the configured FAST/EFT simulation policy
+* Consume reserved-fund events and create one idempotent payment attempt per transaction
+* Persist only the SHA-256 hash and masked form of the beneficiary IBAN in the rail-attempt table
+* Publish successful or rejected rail results through a transactional outbox
+
+Consumes:
+
+* `funds-reserved`
+
+Produces:
+
+* `transfer-rail-result`
+
+Database schema:
+
+* `payment_rail_service`
+
+---
+
 ## Notification Service
 
 Port: `8085`
@@ -315,15 +385,19 @@ Responsibilities:
 # Kafka Topic Pipeline
 
 ```text
-transaction-raw
-    ↓
-transaction-validated
-    ↓
-transaction-checked
-    ↓
-transaction-processed
-    ↓
-transaction-completed
+transaction-raw → transaction-validated
+                           │
+                           ├─ INTERNAL / HAVALE → atomic account + ledger update
+                           │
+                           └─ EFT / FAST → reserve funds → funds-reserved
+                                                        ↓
+                                                Payment Rail Service
+                                                        ↓
+                                                transfer-rail-result
+                                                        ↓
+                                                settle or release funds
+                           ↓
+transaction-checked → transaction-processed → transaction-completed
 ```
 
 Each topic represents a stage of the transaction lifecycle.
@@ -334,6 +408,8 @@ The money-movement path uses the Transactional Outbox and Consumer Inbox pattern
 
 * `transaction-service` stores the new transaction and its `transaction-raw` outbox event in the same PostgreSQL transaction.
 * `account-service` atomically claims each transaction event in `processed_events`, updates balances, and writes the next outbox event.
+* EFT/FAST has two independent inbox identities: reservation and settlement. Duplicate delivery at either stage is a no-op.
+* `payment-rail-service` stores the payment attempt and its `transfer-rail-result` outbox event in one PostgreSQL transaction.
 * Duplicate Kafka deliveries are ignored by the `(consumer_name, event_id)` primary key, so a balance operation is applied once.
 * Outbox publishers wait for Kafka acknowledgement before marking an event `PUBLISHED`. Failed sends stay `PENDING` and are retried.
 * Account consumer failures are retried and then published to `transaction-dlq` instead of being swallowed.
@@ -349,6 +425,9 @@ The money path applies defense in depth in the request DTO, transaction service,
 * `TRANSFER` requires two different accounts; `PAYMENT` and `WITHDRAWAL` require only a source; `DEPOSIT` requires only a target and an `ADMIN` initiator.
 * Both sides of a transfer must be active and use the transaction currency. Cross-currency transfer without an FX leg is rejected.
 * Outgoing amounts consume the account's Istanbul-business-day limit in the same transaction as the balance update.
+* External transfer amounts are removed from `availableBalance` by a durable reservation before the simulated bank call; a rejection releases the reservation and daily-limit usage.
+* Turkish IBANs are normalized and verified with MOD-97; newly opened accounts receive checksum-correct IBANs.
+* HAVALE to an account inside this platform remains one atomic debit/credit transaction. The demo routes external TRY amounts up to and including 20,000 TRY to FAST and larger amounts to EFT; this is an application simulation rule, not a claimed regulatory limit.
 * Ledger posting, balance mutation, consumer inbox claim, and account outbox creation commit or roll back together.
 * Transaction statuses follow explicit allowed transitions under a pessimistic database lock. Repeated status events are idempotent.
 
@@ -367,6 +446,9 @@ The account money-transfer path has Testcontainers integration coverage with rea
 * every transfer produces exactly two immutable ledger entries with equal debit and credit totals;
 * client-created deposits, same-account transfers, and out-of-order status regressions are rejected;
 * fraud daily rules evaluate an idempotent Redis aggregate rather than one transaction in isolation.
+* successful external transfers reserve then settle funds and create a balanced clearing journal;
+* rejected external transfers restore available balance and daily-limit usage without creating a ledger posting;
+* Payment Rail duplicate events do not create a second attempt or result, and persisted rail records contain no plain IBAN.
 
 Docker must be running to execute the integration suite locally:
 
@@ -391,6 +473,7 @@ Schemas:
 * `account_service`
 * `transaction_service`
 * `fraud_service`
+* `payment_rail_service`
 
 Example tables:
 
@@ -401,6 +484,8 @@ Example tables:
 * `fraud_check_results`
 * `ledger_transactions`
 * `ledger_entries`
+* `fund_reservations`
+* `payment_rail_attempts`
 * `processed_events`
 * `outbox_events`
 
@@ -497,9 +582,10 @@ Run the following services in order:
 2. `transaction-service`
 3. `fraud-detection-service`
 4. `account-service`
-5. `notification-service`
-6. `reporting-service`
-7. `api-gateway`
+5. `payment-rail-service`
+6. `notification-service`
+7. `reporting-service`
+8. `api-gateway`
 
 Example:
 
@@ -565,4 +651,4 @@ http://localhost:8080
 
 # Example Resume Description
 
-Developed a real-time fintech transaction platform with Spring Boot microservices, Kafka, PostgreSQL, Redis, MongoDB, RabbitMQ, and Docker. Implemented transactional outbox/consumer idempotency, secure refresh-token rotation, enforced financial invariants and daily limits, an immutable double-entry ledger with reconciliation APIs, retry/DLQ handling, and Testcontainers-based end-to-end transfer tests executed in GitHub Actions CI.
+Developed a real-time fintech transaction platform with Spring Boot microservices, Kafka, PostgreSQL, Redis, MongoDB, RabbitMQ, and Docker. Implemented transactional outbox/consumer idempotency, secure refresh-token rotation, IBAN-based HAVALE/EFT/FAST orchestration with reserve-settle-release semantics, financial invariants and daily limits, an immutable double-entry ledger, retry/DLQ handling, and Testcontainers end-to-end tests executed in GitHub Actions CI.

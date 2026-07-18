@@ -3,6 +3,7 @@ package com.fintech.transaction.entity;
 import com.fintech.common.enums.Currency;
 import com.fintech.common.enums.TransactionStatus;
 import com.fintech.common.enums.TransactionType;
+import com.fintech.common.enums.TransferRail;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -37,6 +38,22 @@ public class Transaction {
 
     @Column(name = "target_account_id")
     private Long targetAccountId;
+
+    @Column(name = "beneficiary_iban", length = 34)
+    private String beneficiaryIban;
+
+    @Column(name = "beneficiary_name", length = 120)
+    private String beneficiaryName;
+
+    @Column(name = "beneficiary_bank_code", length = 10)
+    private String beneficiaryBankCode;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "transfer_rail", length = 20)
+    private TransferRail transferRail;
+
+    @Column(name = "external_reference", unique = true, length = 80)
+    private String externalReference;
 
     @Column(nullable = false, precision = 15, scale = 2)
     private BigDecimal amount;

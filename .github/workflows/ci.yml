@@ -40,6 +40,7 @@ jobs:
             eureka-server
             user-service
             account-service
+            payment-rail-service
             transaction-service
             fraud-detection-service
             notification-service

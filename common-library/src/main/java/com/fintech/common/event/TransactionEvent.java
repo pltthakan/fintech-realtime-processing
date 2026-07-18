@@ -3,6 +3,7 @@ package com.fintech.common.event;
 import com.fintech.common.enums.Currency;
 import com.fintech.common.enums.TransactionStatus;
 import com.fintech.common.enums.TransactionType;
+import com.fintech.common.enums.TransferRail;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -39,6 +40,12 @@ public class TransactionEvent {
     private String description;
     private String referenceNumber;
     private String idempotencyKey;
+    private String beneficiaryIban;
+    private String beneficiaryName;
+    private String beneficiaryBankCode;
+    private TransferRail transferRail;
+    private String externalReference;
+    private String railFailureReason;
 
     // ── Kullanıcı Bilgileri ──
     private Long userId;

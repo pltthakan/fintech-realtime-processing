@@ -85,6 +85,26 @@ public class TransactionController {
     }
 
     /**
+     * Kullanıcının tüm hesaplarındaki gelen ve giden işlemleri tek akışta listele
+     */
+    @GetMapping("/user/{userId}")
+    public ResponseEntity<ApiResponse<Page<TransactionResponse>>> getTransactionsByUser(
+            @PathVariable Long userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestHeader("X-User-Id") Long authenticatedUserId,
+            @RequestHeader("X-User-Name") String username,
+            @RequestHeader("X-User-Role") String role,
+            HttpServletRequest request) {
+
+        Page<TransactionResponse> transactions = transactionService
+                .getTransactionsByUser(userId, authenticatedUserId, role, PageRequest.of(page, size));
+        audit(authenticatedUserId, username, role, AuditAction.TRANSACTION_LIST_VIEWED, "USER", userId.toString(),
+                "GET", request, "resultCount=" + transactions.getNumberOfElements());
+        return ResponseEntity.ok(ApiResponse.success(transactions));
+    }
+
+    /**
      * İşlem durum geçmişini getir (pipeline'daki her aşama)
      */
     @GetMapping("/{id}/history")

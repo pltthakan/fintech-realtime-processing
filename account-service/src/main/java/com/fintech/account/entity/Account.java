@@ -48,6 +48,10 @@ public class Account {
     @Builder.Default
     private BigDecimal balance = BigDecimal.ZERO;
 
+    @Column(name = "reserved_balance", nullable = false, precision = 15, scale = 2)
+    @Builder.Default
+    private BigDecimal reservedBalance = BigDecimal.ZERO;
+
     @Column(name = "daily_limit", nullable = false, precision = 15, scale = 2)
     @Builder.Default
     private BigDecimal dailyLimit = new BigDecimal("50000.00");
@@ -71,4 +75,11 @@ public class Account {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    @Transient
+    public BigDecimal getAvailableBalance() {
+        BigDecimal currentBalance = balance == null ? BigDecimal.ZERO : balance;
+        BigDecimal reserved = reservedBalance == null ? BigDecimal.ZERO : reservedBalance;
+        return currentBalance.subtract(reserved);
+    }
 }

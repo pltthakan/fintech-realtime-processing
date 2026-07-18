@@ -105,7 +105,13 @@ export const transactionService = {
   getById: (id) => api.get(`/transactions/${id}`),
   getByAccount: (accountId, page = 0, size = 20) =>
       api.get(`/transactions/account/${accountId}`, { params: { page, size } }),
+  getByUser: (userId, page = 0, size = 20) =>
+      api.get(`/transactions/user/${userId}`, { params: { page, size } }),
   getHistory: (id) => api.get(`/transactions/${id}/history`),
+};
+
+export const paymentRailService = {
+  resolveBeneficiary: (data) => api.post('/payment-rails/beneficiaries/resolve', data),
 };
 
 export const reportService = {

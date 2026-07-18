@@ -39,6 +39,7 @@ public class NotificationPipelineService {
     public void processTransaction(String message) {
         try {
             TransactionEvent event = JsonUtil.fromJson(message, TransactionEvent.class);
+            boolean failed = event.getStatus() == TransactionStatus.FAILED;
             log.info("Bildirim işlemi başlıyor - txId: {}, status: {}, amount: {} {}",
                     event.getTransactionId(), event.getStatus(), event.getAmount(), event.getCurrency());
 
@@ -46,7 +47,9 @@ public class NotificationPipelineService {
             sendNotifications(event);
 
             // 2. Event'i güncelle
-            event.setStatus(TransactionStatus.COMPLETED);
+            if (!failed) {
+                event.setStatus(TransactionStatus.COMPLETED);
+            }
             event.setProcessedTimestamp(Instant.now());
             event.setCompletedTimestamp(Instant.now());
 
@@ -59,23 +62,20 @@ public class NotificationPipelineService {
             String eventJson = JsonUtil.toJson(event);
 
             // 3. transaction-processed topic'ine yaz
-            kafkaTemplate.send(KafkaTopics.TRANSACTION_PROCESSED, event.getTransactionId(), eventJson);
+            if (!failed) {
+                kafkaTemplate.send(KafkaTopics.TRANSACTION_PROCESSED, event.getTransactionId(), eventJson).join();
+            }
 
             // 4. transaction-completed topic'ine yaz (Kafka Connect → MongoDB)
-            kafkaTemplate.send(KafkaTopics.TRANSACTION_COMPLETED, event.getTransactionId(), eventJson)
-                    .whenComplete((result, ex) -> {
-                        if (ex != null) {
-                            log.error("Kafka'ya yazma hatası - txId: {}", event.getTransactionId(), ex);
-                        } else {
-                            log.info("Pipeline TAMAMLANDI - txId: {}, toplam süre: {}ms, topic: {}",
-                                    event.getTransactionId(),
-                                    event.getTotalProcessingTimeMs(),
-                                    result.getRecordMetadata().topic());
-                        }
-                    });
+            var result = kafkaTemplate.send(
+                    KafkaTopics.TRANSACTION_COMPLETED, event.getTransactionId(), eventJson).join();
+            log.info("Pipeline TAMAMLANDI - txId: {}, toplam süre: {}ms, topic: {}",
+                    event.getTransactionId(), event.getTotalProcessingTimeMs(),
+                    result.getRecordMetadata().topic());
 
         } catch (Exception e) {
             log.error("Notification pipeline hatası: {}", e.getMessage(), e);
+            throw new IllegalStateException("Notification pipeline tamamlanamadı", e);
         }
     }
 
@@ -83,16 +83,25 @@ public class NotificationPipelineService {
      * RabbitMQ üzerinden Email, SMS, Push bildirimleri gönder
      */
     private void sendNotifications(TransactionEvent event) {
+        boolean failed = event.getStatus() == TransactionStatus.FAILED;
+        NotificationEvent.NotificationType notificationType = failed
+                ? NotificationEvent.NotificationType.TRANSACTION_FAILED
+                : NotificationEvent.NotificationType.TRANSACTION_COMPLETED;
+        String subject = (failed ? "İşlem Başarısız - " : "İşlem Tamamlandı - ")
+                + event.getReferenceNumber();
+        String message = failed
+                ? String.format("%s işleminiz tamamlanamadı. Tutar: %s %s, Referans: %s, Neden: %s",
+                        event.getType(), event.getAmount(), event.getCurrency(), event.getReferenceNumber(),
+                        event.getRailFailureReason() == null ? "Ödeme ağı reddi" : event.getRailFailureReason())
+                : String.format("%s işleminiz tamamlandı. Tutar: %s %s, Referans: %s",
+                        event.getType(), event.getAmount(), event.getCurrency(), event.getReferenceNumber());
         NotificationEvent notification = NotificationEvent.builder()
                 .notificationId(UUID.randomUUID().toString())
                 .userId(event.getUserId())
                 .transactionId(event.getTransactionId())
-                .type(NotificationEvent.NotificationType.TRANSACTION_COMPLETED)
-                .subject("İşlem Tamamlandı - " + event.getReferenceNumber())
-                .message(String.format(
-                        "%s işleminiz tamamlandı. Tutar: %s %s, Referans: %s",
-                        event.getType(), event.getAmount(), event.getCurrency(), event.getReferenceNumber()
-                ))
+                .type(notificationType)
+                .subject(subject)
+                .message(message)
                 .templateData(Map.of(
                         "transactionId", event.getTransactionId(),
                         "amount", event.getAmount().toString(),
@@ -117,7 +126,7 @@ public class NotificationPipelineService {
 
         // SMS bildirimi
         try {
-            notification.setType(NotificationEvent.NotificationType.TRANSACTION_COMPLETED);
+            notification.setType(notificationType);
             rabbitTemplate.convertAndSend(
                     RabbitConstants.NOTIFICATION_EXCHANGE,
                     RabbitConstants.SMS_ROUTING_KEY,
@@ -130,7 +139,7 @@ public class NotificationPipelineService {
 
         // Push bildirimi
         try {
-            notification.setType(NotificationEvent.NotificationType.TRANSACTION_COMPLETED);
+            notification.setType(notificationType);
             rabbitTemplate.convertAndSend(
                     RabbitConstants.NOTIFICATION_EXCHANGE,
                     RabbitConstants.PUSH_ROUTING_KEY,

@@ -8,6 +8,7 @@ import com.fintech.common.enums.AccountType;
 import com.fintech.common.enums.Currency;
 import com.fintech.common.enums.TransactionStatus;
 import com.fintech.common.enums.TransactionType;
+import com.fintech.common.enums.TransferRail;
 import com.fintech.common.event.KafkaTopics;
 import com.fintech.common.event.TransactionEvent;
 import com.fintech.common.util.JsonUtil;
@@ -110,6 +111,8 @@ class MoneyTransferFlowIntegrationTest {
         try (AdminClient admin = adminClient()) {
             createTopic(admin, KafkaTopics.TRANSACTION_VALIDATED);
             createTopic(admin, KafkaTopics.TRANSACTION_CHECKED);
+            createTopic(admin, KafkaTopics.FUNDS_RESERVED);
+            createTopic(admin, KafkaTopics.TRANSFER_RAIL_RESULT);
             createTopic(admin, KafkaTopics.TRANSACTION_DLQ);
         }
     }
@@ -216,6 +219,88 @@ class MoneyTransferFlowIntegrationTest {
         assertThat(countLedgerTransactions(transactionId)).isZero();
     }
 
+    @Test
+    void externalFastTransferReservesThenSettlesFundsAndBalancesLedger() throws Exception {
+        long ownerId = 400L;
+        Account source = createAccount(ownerId, "1000.00");
+        String transactionId = UUID.randomUUID().toString();
+        TransactionEvent event = externalTransferEvent(transactionId, ownerId, source.getId(), "125.50");
+
+        kafkaTemplate.send(KafkaTopics.TRANSACTION_VALIDATED, transactionId, JsonUtil.toJson(event))
+                .get(10, TimeUnit.SECONDS);
+
+        TransactionEvent reservedEvent = consumeEvent(
+                KafkaTopics.FUNDS_RESERVED, transactionId, Duration.ofSeconds(15));
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+            Account reserved = accountRepository.findById(source.getId()).orElseThrow();
+            assertThat(reserved.getBalance()).isEqualByComparingTo("1000.00");
+            assertThat(reserved.getReservedBalance()).isEqualByComparingTo("125.50");
+            assertThat(reserved.getAvailableBalance()).isEqualByComparingTo("874.50");
+            assertThat(reserved.getDailySpent()).isEqualByComparingTo("125.50");
+            assertThat(reservationStatus(transactionId)).isEqualTo("RESERVED");
+            assertThat(countLedgerTransactions(transactionId)).isZero();
+        });
+
+        reservedEvent.setStatus(TransactionStatus.PROCESSED);
+        reservedEvent.setExternalReference("RAIL-INTEGRATION-SUCCESS");
+        kafkaTemplate.send(KafkaTopics.TRANSFER_RAIL_RESULT, transactionId, JsonUtil.toJson(reservedEvent))
+                .get(10, TimeUnit.SECONDS);
+
+        TransactionEvent checkedEvent = consumeEvent(
+                KafkaTopics.TRANSACTION_CHECKED, transactionId, Duration.ofSeconds(15));
+        assertThat(checkedEvent.getStatus()).isEqualTo(TransactionStatus.PROCESSED);
+        assertThat(checkedEvent.getExternalReference()).isEqualTo("RAIL-INTEGRATION-SUCCESS");
+
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+            Account settled = accountRepository.findById(source.getId()).orElseThrow();
+            assertThat(settled.getBalance()).isEqualByComparingTo("874.50");
+            assertThat(settled.getReservedBalance()).isEqualByComparingTo("0.00");
+            assertThat(reservationStatus(transactionId)).isEqualTo("SETTLED");
+            assertThat(countProcessedEvents(transactionId)).isEqualTo(2);
+            assertThat(countOutboxEvents(transactionId)).isEqualTo(2);
+            assertThat(countLedgerTransactions(transactionId)).isEqualTo(1);
+            assertThat(countLedgerEntries(transactionId)).isEqualTo(2);
+            assertThat(ledgerTotal(transactionId, "DEBIT")).isEqualByComparingTo("125.50");
+            assertThat(ledgerTotal(transactionId, "CREDIT")).isEqualByComparingTo("125.50");
+        });
+    }
+
+    @Test
+    void rejectedExternalTransferReleasesReservationAndDailyLimitWithoutLedgerEntry() throws Exception {
+        long ownerId = 500L;
+        Account source = createAccount(ownerId, "1000.00");
+        String transactionId = UUID.randomUUID().toString();
+        TransactionEvent event = externalTransferEvent(transactionId, ownerId, source.getId(), "200.00");
+
+        kafkaTemplate.send(KafkaTopics.TRANSACTION_VALIDATED, transactionId, JsonUtil.toJson(event))
+                .get(10, TimeUnit.SECONDS);
+        TransactionEvent reservedEvent = consumeEvent(
+                KafkaTopics.FUNDS_RESERVED, transactionId, Duration.ofSeconds(15));
+
+        reservedEvent.setStatus(TransactionStatus.FAILED);
+        reservedEvent.setExternalReference("RAIL-INTEGRATION-REJECTED");
+        reservedEvent.setRailFailureReason("BENEFICIARY_BANK_REJECTED");
+        kafkaTemplate.send(KafkaTopics.TRANSFER_RAIL_RESULT, transactionId, JsonUtil.toJson(reservedEvent))
+                .get(10, TimeUnit.SECONDS);
+
+        TransactionEvent checkedEvent = consumeEvent(
+                KafkaTopics.TRANSACTION_CHECKED, transactionId, Duration.ofSeconds(15));
+        assertThat(checkedEvent.getStatus()).isEqualTo(TransactionStatus.FAILED);
+        assertThat(checkedEvent.getRailFailureReason()).isEqualTo("BENEFICIARY_BANK_REJECTED");
+
+        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+            Account released = accountRepository.findById(source.getId()).orElseThrow();
+            assertThat(released.getBalance()).isEqualByComparingTo("1000.00");
+            assertThat(released.getReservedBalance()).isEqualByComparingTo("0.00");
+            assertThat(released.getAvailableBalance()).isEqualByComparingTo("1000.00");
+            assertThat(released.getDailySpent()).isEqualByComparingTo("0.00");
+            assertThat(reservationStatus(transactionId)).isEqualTo("RELEASED");
+            assertThat(countProcessedEvents(transactionId)).isEqualTo(2);
+            assertThat(countOutboxEvents(transactionId)).isEqualTo(2);
+            assertThat(countLedgerTransactions(transactionId)).isZero();
+        });
+    }
+
     private Account createAccount(Long userId, String balance) {
         long sequence = ACCOUNT_SEQUENCE.getAndIncrement();
         return accountRepository.saveAndFlush(Account.builder()
@@ -241,6 +326,28 @@ class MoneyTransferFlowIntegrationTest {
                 .transactionId(transactionId)
                 .sourceAccountId(sourceAccountId)
                 .targetAccountId(targetAccountId)
+                .userId(ownerId)
+                .username("integration-test")
+                .amount(new BigDecimal(amount))
+                .currency(Currency.TRY)
+                .type(TransactionType.TRANSFER)
+                .status(TransactionStatus.CHECKED)
+                .checkedTimestamp(Instant.now())
+                .build();
+    }
+
+    private TransactionEvent externalTransferEvent(
+            String transactionId,
+            Long ownerId,
+            Long sourceAccountId,
+            String amount) {
+        return TransactionEvent.builder()
+                .transactionId(transactionId)
+                .sourceAccountId(sourceAccountId)
+                .beneficiaryIban("TR330006100519786457841326")
+                .beneficiaryName("Integration Beneficiary")
+                .beneficiaryBankCode("00061")
+                .transferRail(TransferRail.FAST)
                 .userId(ownerId)
                 .username("integration-test")
                 .amount(new BigDecimal(amount))
@@ -336,6 +443,13 @@ class MoneyTransferFlowIntegrationTest {
                 BigDecimal.class,
                 transactionId,
                 direction);
+    }
+
+    private String reservationStatus(String transactionId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT status FROM account_service.fund_reservations WHERE transaction_id = ?::uuid",
+                String.class,
+                transactionId);
     }
 
     private static AdminClient adminClient() {

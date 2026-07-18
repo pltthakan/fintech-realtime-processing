@@ -31,4 +31,18 @@ public interface AccountRepository extends JpaRepository<Account, Long> {
     List<Account> findByUserId(Long userId);
 
     List<Account> findByUserIdAndStatus(Long userId, AccountStatus status);
+
+    @Query(value = """
+            SELECT a.id AS accountId,
+                   a.user_id AS userId,
+                   a.account_number AS iban,
+                   a.currency AS currency,
+                   a.status AS status,
+                   COALESCE(NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), u.username)
+                       AS beneficiaryName
+            FROM account_service.accounts a
+            JOIN user_service.users u ON u.id = a.user_id
+            WHERE a.account_number = :iban
+            """, nativeQuery = true)
+    Optional<InternalBeneficiaryView> resolveInternalBeneficiary(@Param("iban") String iban);
 }

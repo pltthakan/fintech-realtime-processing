@@ -2,6 +2,9 @@ package com.fintech.transaction.service;
 
 import com.fintech.common.dto.request.TransactionRequest;
 import com.fintech.common.dto.response.TransactionResponse;
+import com.fintech.common.enums.Currency;
+import com.fintech.common.enums.TransactionDirection;
+import com.fintech.common.enums.TransferRail;
 import com.fintech.common.enums.TransactionType;
 import com.fintech.common.enums.TransactionStatus;
 import com.fintech.common.event.KafkaTopics;
@@ -11,10 +14,13 @@ import com.fintech.common.exception.BusinessException;
 import com.fintech.common.exception.ForbiddenException;
 import com.fintech.common.exception.ResourceNotFoundException;
 import com.fintech.common.util.JsonUtil;
+import com.fintech.common.util.IbanUtils;
 import com.fintech.common.util.ReferenceGenerator;
+import com.fintech.common.util.TransferRoutingPolicy;
 import com.fintech.transaction.entity.Transaction;
 import com.fintech.transaction.entity.TransactionStatusHistory;
 import com.fintech.transaction.repository.TransactionRepository;
+import com.fintech.transaction.repository.AccountRoutingView;
 import com.fintech.transaction.repository.TransactionStatusHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,7 +59,7 @@ public class TransactionService {
     public TransactionResponse createTransaction(
             TransactionRequest request, Long userId, String username, String role) {
 
-        validateTransactionRequest(request, userId, role);
+        ResolvedDestination destination = validateTransactionRequest(request, userId, role);
 
         // 1. İdempotency kontrolü
         transactionRepository.findByIdempotencyKey(request.getIdempotencyKey())
@@ -65,7 +71,11 @@ public class TransactionService {
         Transaction transaction = Transaction.builder()
                 .userId(userId)
                 .sourceAccountId(request.getSourceAccountId())
-                .targetAccountId(request.getTargetAccountId())
+                .targetAccountId(destination.targetAccountId())
+                .beneficiaryIban(destination.beneficiaryIban())
+                .beneficiaryName(destination.beneficiaryName())
+                .beneficiaryBankCode(destination.beneficiaryBankCode())
+                .transferRail(destination.transferRail())
                 .amount(request.getAmount())
                 .currency(request.getCurrency())
                 .type(request.getType())
@@ -90,6 +100,10 @@ public class TransactionService {
                 .transactionId(transaction.getId().toString())
                 .sourceAccountId(transaction.getSourceAccountId())
                 .targetAccountId(transaction.getTargetAccountId())
+                .beneficiaryIban(transaction.getBeneficiaryIban())
+                .beneficiaryName(transaction.getBeneficiaryName())
+                .beneficiaryBankCode(transaction.getBeneficiaryBankCode())
+                .transferRail(transaction.getTransferRail())
                 .amount(transaction.getAmount())
                 .currency(transaction.getCurrency())
                 .type(transaction.getType())
@@ -148,8 +162,8 @@ public class TransactionService {
     public TransactionResponse getTransactionById(UUID id, Long authenticatedUserId, String role) {
         Transaction transaction = transactionRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("İşlem", "id", id));
-        validateTransactionOwnership(transaction, authenticatedUserId, role);
-        return toResponse(transaction);
+        TransactionDirection direction = validateTransactionAccess(transaction, authenticatedUserId, role);
+        return toResponse(transaction, direction);
     }
 
     public Page<TransactionResponse> getTransactionsByAccount(
@@ -158,23 +172,30 @@ public class TransactionService {
             throw new ForbiddenException();
         }
 
-        Page<Transaction> transactions = isAdministrator(role)
-                ? transactionRepository.findBySourceAccountIdOrderByCreatedAtDesc(accountId, pageable)
-                : transactionRepository.findBySourceAccountIdAndUserIdOrderByCreatedAtDesc(
-                        accountId, authenticatedUserId, pageable);
-        return transactions
-                .map(this::toResponse);
+        return transactionRepository.findByAccountIdOrderByCreatedAtDesc(accountId, pageable)
+                .map(transaction -> toResponse(transaction, directionForAccount(transaction, accountId)));
+    }
+
+    public Page<TransactionResponse> getTransactionsByUser(
+            Long userId, Long authenticatedUserId, String role, Pageable pageable) {
+        if (!isAdministrator(role) && !Objects.equals(userId, authenticatedUserId)) {
+            throw new ForbiddenException();
+        }
+
+        Set<Long> ownedAccountIds = Set.copyOf(transactionRepository.findAccountIdsOwnedBy(userId));
+        return transactionRepository.findByParticipantUserId(userId, pageable)
+                .map(transaction -> toResponse(transaction, directionForAccounts(transaction, ownedAccountIds)));
     }
 
     public List<TransactionStatusHistory> getTransactionHistory(
             UUID transactionId, Long authenticatedUserId, String role) {
         Transaction transaction = transactionRepository.findById(transactionId)
                 .orElseThrow(() -> new ResourceNotFoundException("İşlem", "id", transactionId));
-        validateTransactionOwnership(transaction, authenticatedUserId, role);
+        validateTransactionAccess(transaction, authenticatedUserId, role);
         return statusHistoryRepository.findByTransactionIdOrderByCreatedAtAsc(transactionId);
     }
 
-    private void validateTransactionRequest(TransactionRequest request, Long userId, String role) {
+    private ResolvedDestination validateTransactionRequest(TransactionRequest request, Long userId, String role) {
         if (userId == null || userId <= 0) {
             throw new ForbiddenException();
         }
@@ -193,16 +214,17 @@ public class TransactionService {
         switch (request.getType()) {
             case TRANSFER -> {
                 requireAccount(request.getSourceAccountId(), "Kaynak hesap zorunludur");
-                requireAccount(request.getTargetAccountId(), "Hedef hesap zorunludur");
-                if (Objects.equals(request.getSourceAccountId(), request.getTargetAccountId())) {
+                if (request.getTargetAccountId() != null
+                        && Objects.equals(request.getSourceAccountId(), request.getTargetAccountId())) {
                     throw badRequest("Kaynak ve hedef hesap aynı olamaz", "SAME_ACCOUNT_TRANSFER");
                 }
                 validateOwnedActiveAccount(request.getSourceAccountId(), userId, request);
-                validateActiveAccount(request.getTargetAccountId(), request);
+                return resolveTransferDestination(request, userId);
             }
             case PAYMENT, WITHDRAWAL -> {
                 requireAccount(request.getSourceAccountId(), "Kaynak hesap zorunludur");
                 requireAbsent(request.getTargetAccountId(), "Bu işlem tipi hedef hesap kabul etmez");
+                requireNoBeneficiary(request);
                 validateOwnedActiveAccount(request.getSourceAccountId(), userId, request);
             }
             case DEPOSIT -> {
@@ -212,9 +234,83 @@ public class TransactionService {
                 }
                 requireAbsent(request.getSourceAccountId(), "Para yatırmada kaynak hesap gönderilmemelidir");
                 requireAccount(request.getTargetAccountId(), "Hedef hesap zorunludur");
+                requireNoBeneficiary(request);
                 validateActiveAccount(request.getTargetAccountId(), request);
             }
         }
+        return ResolvedDestination.none(request.getTargetAccountId());
+    }
+
+    private ResolvedDestination resolveTransferDestination(TransactionRequest request, Long userId) {
+        boolean hasTargetId = request.getTargetAccountId() != null;
+        boolean hasIban = request.getBeneficiaryIban() != null && !request.getBeneficiaryIban().isBlank();
+        if (hasTargetId == hasIban) {
+            throw badRequest(
+                    "Transfer için hedef hesap veya alıcı IBAN alanlarından yalnızca biri gönderilmelidir",
+                    "TRANSFER_DESTINATION_REQUIRED");
+        }
+
+        if (hasTargetId) {
+            requireAccount(request.getTargetAccountId(), "Hedef hesap zorunludur");
+            if (Objects.equals(request.getSourceAccountId(), request.getTargetAccountId())) {
+                throw badRequest("Kaynak ve hedef hesap aynı olamaz", "SAME_ACCOUNT_TRANSFER");
+            }
+            validateActiveAccount(request.getTargetAccountId(), request);
+            TransferRail rail = transactionRepository.existsAccountOwnedBy(request.getTargetAccountId(), userId)
+                    ? TransferRail.INTERNAL : TransferRail.HAVALE;
+            return new ResolvedDestination(request.getTargetAccountId(), null, null, null, rail);
+        }
+
+        String iban = IbanUtils.normalize(request.getBeneficiaryIban());
+        AccountRoutingView source = transactionRepository.findAccountForRoutingById(request.getSourceAccountId())
+                .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", request.getSourceAccountId()));
+        if (source.getAccountNumber().equals(iban)) {
+            throw badRequest("Kaynak IBAN alıcı IBAN ile aynı olamaz", "SAME_ACCOUNT_TRANSFER");
+        }
+
+        AccountRoutingView internalTarget = transactionRepository.findAccountForRouting(iban).orElse(null);
+        if (internalTarget != null) {
+            if (!"ACTIVE".equals(internalTarget.getStatus())
+                    || !request.getCurrency().name().equals(internalTarget.getCurrency())) {
+                throw badRequest("Alıcı hesabı aktif olmalı ve para birimi eşleşmelidir",
+                        "BENEFICIARY_ACCOUNT_MISMATCH");
+            }
+            TransferRail rail = Objects.equals(internalTarget.getUserId(), userId)
+                    ? TransferRail.INTERNAL : TransferRail.HAVALE;
+            return new ResolvedDestination(
+                    internalTarget.getId(), iban, trimToNull(request.getBeneficiaryName()),
+                    IbanUtils.bankCode(iban), rail);
+        }
+
+        if (!IbanUtils.isValidTurkishIban(iban)) {
+            throw badRequest("Geçerli bir Türkiye IBAN'ı girilmelidir", "INVALID_BENEFICIARY_IBAN");
+        }
+        if (request.getCurrency() != Currency.TRY) {
+            throw badRequest("EFT/FAST simülasyonu yalnızca TRY hesaplarını destekler",
+                    "EXTERNAL_TRANSFER_CURRENCY_NOT_SUPPORTED");
+        }
+        String beneficiaryName = trimToNull(request.getBeneficiaryName());
+        if (beneficiaryName == null) {
+            throw badRequest("Harici transferlerde alıcı adı zorunludur", "BENEFICIARY_NAME_REQUIRED");
+        }
+
+        TransferRail rail = TransferRoutingPolicy.selectExternalRail(request.getAmount(), request.getCurrency());
+        return new ResolvedDestination(null, iban, beneficiaryName, IbanUtils.bankCode(iban), rail);
+    }
+
+    private void requireNoBeneficiary(TransactionRequest request) {
+        if ((request.getBeneficiaryIban() != null && !request.getBeneficiaryIban().isBlank())
+                || (request.getBeneficiaryName() != null && !request.getBeneficiaryName().isBlank())
+                || request.getTransferRail() != null) {
+            throw badRequest("Bu işlem tipi alıcı IBAN bilgisi kabul etmez", "UNEXPECTED_BENEFICIARY");
+        }
+    }
+
+    private String trimToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private void validateOwnedActiveAccount(Long accountId, Long userId, TransactionRequest request) {
@@ -278,10 +374,19 @@ public class TransactionService {
         return Map.copyOf(transitions);
     }
 
-    private void validateTransactionOwnership(Transaction transaction, Long authenticatedUserId, String role) {
-        if (!isAdministrator(role) && !java.util.Objects.equals(transaction.getUserId(), authenticatedUserId)) {
+    private TransactionDirection validateTransactionAccess(
+            Transaction transaction, Long authenticatedUserId, String role) {
+        if (isAdministrator(role)) {
+            return defaultDirection(transaction);
+        }
+
+        Set<Long> ownedAccountIds = Set.copyOf(
+                transactionRepository.findAccountIdsOwnedBy(authenticatedUserId));
+        TransactionDirection direction = directionForAccounts(transaction, ownedAccountIds);
+        if (direction == null && !Objects.equals(transaction.getUserId(), authenticatedUserId)) {
             throw new ForbiddenException();
         }
+        return direction != null ? direction : defaultDirection(transaction);
     }
 
     private boolean isAdministrator(String role) {
@@ -299,13 +404,22 @@ public class TransactionService {
     }
 
     private TransactionResponse toResponse(Transaction tx) {
+        return toResponse(tx, defaultDirection(tx));
+    }
+
+    private TransactionResponse toResponse(Transaction tx, TransactionDirection direction) {
         return TransactionResponse.builder()
                 .transactionId(tx.getId().toString())
                 .sourceAccountId(tx.getSourceAccountId())
                 .targetAccountId(tx.getTargetAccountId())
+                .beneficiaryIban(tx.getBeneficiaryIban() == null ? null : IbanUtils.mask(tx.getBeneficiaryIban()))
+                .beneficiaryName(tx.getBeneficiaryName())
+                .transferRail(tx.getTransferRail())
+                .externalReference(tx.getExternalReference())
                 .amount(tx.getAmount())
                 .currency(tx.getCurrency())
                 .type(tx.getType())
+                .direction(direction)
                 .status(tx.getStatus())
                 .fraudScore(tx.getFraudScore())
                 .description(tx.getDescription())
@@ -313,5 +427,149 @@ public class TransactionService {
                 .createdAt(tx.getCreatedAt())
                 .completedAt(tx.getCompletedAt())
                 .build();
+    }
+
+    private TransactionDirection directionForAccount(Transaction transaction, Long accountId) {
+        if (Objects.equals(transaction.getSourceAccountId(), accountId)) {
+            return TransactionDirection.DEBIT;
+        }
+        if (Objects.equals(transaction.getTargetAccountId(), accountId)) {
+            return TransactionDirection.CREDIT;
+        }
+        throw new IllegalStateException("İşlem sorgulanan hesaba ait değil: " + accountId);
+    }
+
+    private TransactionDirection directionForAccounts(Transaction transaction, Set<Long> accountIds) {
+        boolean ownsSource = transaction.getSourceAccountId() != null
+                && accountIds.contains(transaction.getSourceAccountId());
+        boolean ownsTarget = transaction.getTargetAccountId() != null
+                && accountIds.contains(transaction.getTargetAccountId());
+
+        if (ownsSource && ownsTarget) {
+            return TransactionDirection.NEUTRAL;
+        }
+        if (ownsSource) {
+            return TransactionDirection.DEBIT;
+        }
+        if (ownsTarget) {
+            return TransactionDirection.CREDIT;
+        }
+        return null;
+    }
+
+    private TransactionDirection defaultDirection(Transaction transaction) {
+        return transaction.getType() == TransactionType.DEPOSIT
+                ? TransactionDirection.CREDIT
+                : TransactionDirection.DEBIT;
+    }
+
+    @Transactional
+    public void applyAccountResult(TransactionEvent event) {
+        UUID transactionId = UUID.fromString(event.getTransactionId());
+        Transaction transaction = transactionRepository.findByIdWithLock(transactionId)
+                .orElseThrow(() -> new ResourceNotFoundException("İşlem", "id", transactionId));
+        transaction.setExternalReference(event.getExternalReference());
+        transaction.setErrorMessage(event.getRailFailureReason());
+
+        TransactionStatus desired = event.getStatus() == TransactionStatus.FAILED
+                ? TransactionStatus.FAILED : TransactionStatus.PROCESSED;
+        TransactionStatus current = transaction.getStatus();
+        if (current == TransactionStatus.COMPLETED && desired == TransactionStatus.PROCESSED) {
+            transactionRepository.save(transaction);
+            return;
+        }
+        if ((current == TransactionStatus.VALIDATED || current == TransactionStatus.FRAUD_CHECK)
+                && desired != TransactionStatus.FAILED) {
+            transaction.setStatus(TransactionStatus.CHECKED);
+            saveStatusHistory(transactionId, current, TransactionStatus.CHECKED,
+                    "fraud-detection-service", "Fraud sonucu hesap olayından doğrulandı");
+            current = TransactionStatus.CHECKED;
+        }
+        if (current != desired) {
+            validateStatusTransition(current, desired);
+            transaction.setStatus(desired);
+            saveStatusHistory(transactionId, current, desired, "account-service",
+                    desired == TransactionStatus.FAILED
+                            ? "Dış transfer başarısız, rezervasyon serbest bırakıldı"
+                            : "Bakiye ve ledger güncellendi");
+        }
+        transactionRepository.save(transaction);
+    }
+
+    /** Ayrı Kafka topic'leri farklı hızlarda işlense de fraud sonucu durumu geriye götürmez. */
+    @Transactional
+    public void applyFraudResult(TransactionEvent event) {
+        UUID transactionId = UUID.fromString(event.getTransactionId());
+        Transaction transaction = transactionRepository.findByIdWithLock(transactionId)
+                .orElseThrow(() -> new ResourceNotFoundException("İşlem", "id", transactionId));
+        TransactionStatus desired = Boolean.TRUE.equals(event.getIsBlocked())
+                ? TransactionStatus.BLOCKED : TransactionStatus.CHECKED;
+        TransactionStatus current = transaction.getStatus();
+
+        if (current == desired) {
+            return;
+        }
+        if (desired == TransactionStatus.CHECKED
+                && EnumSet.of(TransactionStatus.PROCESSING, TransactionStatus.PROCESSED,
+                        TransactionStatus.COMPLETED, TransactionStatus.FAILED).contains(current)) {
+            log.info("Geç gelen fraud sonucu atlandı - txId: {}, current: {}", transactionId, current);
+            return;
+        }
+
+        validateStatusTransition(current, desired);
+        transaction.setStatus(desired);
+        transaction.setFraudScore(event.getFraudScore());
+        transactionRepository.save(transaction);
+        saveStatusHistory(transactionId, current, desired, "fraud-detection-service",
+                desired == TransactionStatus.BLOCKED
+                        ? "Fraud kontrolünde engellendi. Skor: " + event.getFraudScore()
+                        : "Fraud kontrolünden geçti. Skor: " + event.getFraudScore());
+    }
+
+    /** Notification olayı önce gelirse eksik ara durumları kilit altında tamamlar. */
+    @Transactional
+    public void applyNotificationResult(TransactionEvent event) {
+        UUID transactionId = UUID.fromString(event.getTransactionId());
+        Transaction transaction = transactionRepository.findByIdWithLock(transactionId)
+                .orElseThrow(() -> new ResourceNotFoundException("İşlem", "id", transactionId));
+        TransactionStatus current = transaction.getStatus();
+        if (current == TransactionStatus.COMPLETED) {
+            return;
+        }
+        if (current == TransactionStatus.FAILED || current == TransactionStatus.BLOCKED) {
+            throw new BusinessException("Başarısız işlem tamamlandı olarak işaretlenemez",
+                    "INVALID_STATUS_TRANSITION", HttpStatus.CONFLICT);
+        }
+        if (current == TransactionStatus.VALIDATED || current == TransactionStatus.FRAUD_CHECK) {
+            transaction.setStatus(TransactionStatus.CHECKED);
+            saveStatusHistory(transactionId, current, TransactionStatus.CHECKED,
+                    "fraud-detection-service", "Fraud sonucu sonraki pipeline olayından doğrulandı");
+            current = TransactionStatus.CHECKED;
+        }
+        if (current == TransactionStatus.CHECKED || current == TransactionStatus.PROCESSING) {
+            transaction.setStatus(TransactionStatus.PROCESSED);
+            saveStatusHistory(transactionId, current, TransactionStatus.PROCESSED,
+                    "account-service", "Bakiye ve ledger güncellendi");
+            current = TransactionStatus.PROCESSED;
+        }
+
+        validateStatusTransition(current, TransactionStatus.COMPLETED);
+        transaction.setStatus(TransactionStatus.COMPLETED);
+        transaction.setCompletedAt(Instant.now());
+        transactionRepository.save(transaction);
+        saveStatusHistory(transactionId, current, TransactionStatus.COMPLETED,
+                "notification-service", "İşlem tamamlandı, bildirim gönderildi");
+    }
+
+    private record ResolvedDestination(
+            Long targetAccountId,
+            String beneficiaryIban,
+            String beneficiaryName,
+            String beneficiaryBankCode,
+            TransferRail transferRail) {
+
+        private static ResolvedDestination none(Long targetAccountId) {
+            return new ResolvedDestination(targetAccountId, null, null, null, null);
+        }
     }
 }

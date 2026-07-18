@@ -2,8 +2,10 @@ package com.fintech.account.service;
 
 import com.fintech.account.entity.Account;
 import com.fintech.account.repository.AccountRepository;
+import com.fintech.account.repository.FundReservationRepository;
 import com.fintech.common.enums.AccountType;
 import com.fintech.common.enums.Currency;
+import com.fintech.common.util.IbanUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,13 +24,15 @@ class AccountServiceTest {
     @Mock
     private AccountRepository accountRepository;
     @Mock
+    private FundReservationRepository fundReservationRepository;
+    @Mock
     private LedgerService ledgerService;
 
     private AccountService service;
 
     @BeforeEach
     void setUp() {
-        service = new AccountService(accountRepository, ledgerService);
+        service = new AccountService(accountRepository, fundReservationRepository, ledgerService);
     }
 
     @Test
@@ -42,5 +46,6 @@ class AccountServiceTest {
         assertThat(account.getBalance()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(account.getDailySpent()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(account.getDailyLimit()).isEqualByComparingTo("50000.00");
+        assertThat(IbanUtils.isValidTurkishIban(account.getAccountNumber())).isTrue();
     }
 }
