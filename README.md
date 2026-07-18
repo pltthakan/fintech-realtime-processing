@@ -81,7 +81,8 @@ The pipeline resolves another platform user's IBAN as an atomic HAVALE. Transfer
 
 
 ### Transactions
-<img width="1470" height="956" alt="Ekran Resmi 2026-04-13 00 44 25" src="https://github.com/user-attachments/assets/cde9dbbf-5a59-4f94-b381-fdd6101cc97b" />
+<img width="795" height="783" alt="Ekran Resmi 2026-07-18 12 43 08" src="https://github.com/user-attachments/assets/fdda9d21-41ec-48aa-8a72-1750efee0b36" />
+
 
 
 ### New Transaction
