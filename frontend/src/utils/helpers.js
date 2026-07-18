@@ -43,6 +43,43 @@ export const TX_TYPE_CONFIG = {
   WITHDRAWAL: { label: 'Çekme',     icon: '↑', iconBg: 'bg-red-50',     iconColor: 'text-red-600' },
 };
 
+export function transactionAmountMeta(transaction) {
+  const direction = transaction.direction
+      || (transaction.type === 'DEPOSIT'
+          ? 'CREDIT'
+          : ['PAYMENT', 'WITHDRAWAL'].includes(transaction.type) ? 'DEBIT' : null);
+
+  if (direction === 'CREDIT') {
+    return { sign: '+', color: 'text-emerald-600' };
+  }
+  if (direction === 'DEBIT') {
+    return { sign: '-', color: 'text-red-600' };
+  }
+  if (direction === 'NEUTRAL') {
+    return { sign: '', color: 'text-blue-600' };
+  }
+  return { sign: '', color: 'text-slate-900' };
+}
+
+export function transactionDisplayLabel(transaction) {
+  if (transaction.type !== 'TRANSFER') {
+    return TX_TYPE_CONFIG[transaction.type]?.label || transaction.type;
+  }
+
+  const railLabels = {
+    HAVALE: 'Havale',
+    EFT: 'EFT',
+    FAST: 'FAST',
+    INTERNAL: 'Transfer',
+  };
+  const railLabel = railLabels[transaction.transferRail] || 'Transfer';
+
+  if (transaction.direction === 'CREDIT') return `Gelen ${railLabel}`;
+  if (transaction.direction === 'DEBIT') return `Giden ${railLabel}`;
+  if (transaction.direction === 'NEUTRAL') return 'Hesaplar Arası Transfer';
+  return railLabel;
+}
+
 // ── Account Type Labels ──
 export const ACCOUNT_TYPE_LABELS = {
   CHECKING: 'Vadesiz',

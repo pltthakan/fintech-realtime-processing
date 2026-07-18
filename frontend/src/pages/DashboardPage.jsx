@@ -3,7 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { reportService, accountService, transactionService } from '../services/api';
 import { StatCard, PipelineTracker, StatusBadge, LoadingState } from '../components/ui';
-import { formatMoney, formatDate, TX_TYPE_CONFIG } from '../utils/helpers';
+import {
+  formatMoney,
+  formatDate,
+  TX_TYPE_CONFIG,
+  transactionAmountMeta,
+  transactionDisplayLabel,
+} from '../utils/helpers';
 import { RefreshCw, Plus } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -31,10 +37,10 @@ function UserDashboard() {
         const userAccounts = accRes.data.data || [];
         setAccounts(userAccounts);
 
-        // İlk hesabın işlemlerini çek
+        // Tüm hesaplardaki gelen ve giden işlemleri tek akışta çek
         if (userAccounts.length > 0) {
           try {
-            const txRes = await transactionService.getByAccount(userAccounts[0].id, 0, 5);
+            const txRes = await transactionService.getByUser(user.id, 0, 5);
             setTransactions(txRes.data.data?.content || txRes.data.data || []);
           } catch {
             setTransactions([]);
@@ -138,18 +144,20 @@ function UserDashboard() {
                 ) : (
                     transactions.map((tx, i) => {
                       const typeConf = TX_TYPE_CONFIG[tx.type] || {};
+                      const amountMeta = transactionAmountMeta(tx);
+                      const transactionLabel = transactionDisplayLabel(tx);
                       return (
                           <div key={tx.transactionId || i} className={`flex items-center px-5 py-3 ${i < transactions.length - 1 ? 'border-b border-slate-50' : ''}`}>
                             <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm mr-3 flex-shrink-0 ${typeConf.iconBg || 'bg-blue-50'} ${typeConf.iconColor || 'text-blue-600'}`}>
                               {typeConf.icon || '↔'}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-slate-800">{typeConf.label}{tx.description ? ` — ${tx.description}` : ''}</p>
+                              <p className="text-sm font-medium text-slate-800">{transactionLabel}{tx.description ? ` — ${tx.description}` : ''}</p>
                               <p className="text-xs text-slate-400 mt-0.5">{formatDate(tx.createdAt)}</p>
                             </div>
                             <div className="text-right mr-3">
-                              <p className={`text-sm font-bold font-mono ${tx.type === 'DEPOSIT' ? 'text-emerald-600' : 'text-slate-900'}`}>
-                                {tx.type === 'DEPOSIT' ? '+' : tx.type === 'WITHDRAWAL' || tx.type === 'PAYMENT' ? '-' : ''}
+                              <p className={`text-sm font-bold font-mono ${amountMeta.color}`}>
+                                {amountMeta.sign}
                                 {formatMoney(tx.amount, tx.currency)}
                               </p>
                             </div>

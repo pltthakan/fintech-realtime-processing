@@ -11,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 @Repository
@@ -22,12 +23,40 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     @Query("SELECT t FROM Transaction t WHERE t.id = :id")
     Optional<Transaction> findByIdWithLock(@Param("id") UUID id);
 
-    Page<Transaction> findBySourceAccountIdOrderByCreatedAtDesc(Long sourceAccountId, Pageable pageable);
+    @Query("""
+            SELECT t FROM Transaction t
+            WHERE t.sourceAccountId = :accountId OR t.targetAccountId = :accountId
+            ORDER BY t.createdAt DESC
+            """)
+    Page<Transaction> findByAccountIdOrderByCreatedAtDesc(
+            @Param("accountId") Long accountId, Pageable pageable);
 
-    Page<Transaction> findBySourceAccountIdAndUserIdOrderByCreatedAtDesc(
-            Long sourceAccountId, Long userId, Pageable pageable);
+    @Query(value = """
+            SELECT t.*
+            FROM transaction_service.transactions t
+            WHERE t.source_account_id IN (
+                SELECT a.id FROM account_service.accounts a WHERE a.user_id = :userId
+            ) OR t.target_account_id IN (
+                SELECT a.id FROM account_service.accounts a WHERE a.user_id = :userId
+            )
+            ORDER BY t.created_at DESC
+            """,
+            countQuery = """
+            SELECT COUNT(*)
+            FROM transaction_service.transactions t
+            WHERE t.source_account_id IN (
+                SELECT a.id FROM account_service.accounts a WHERE a.user_id = :userId
+            ) OR t.target_account_id IN (
+                SELECT a.id FROM account_service.accounts a WHERE a.user_id = :userId
+            )
+            """,
+            nativeQuery = true)
+    Page<Transaction> findByParticipantUserId(@Param("userId") Long userId, Pageable pageable);
 
-    Page<Transaction> findByTargetAccountIdOrderByCreatedAtDesc(Long targetAccountId, Pageable pageable);
+    @Query(value = """
+            SELECT id FROM account_service.accounts WHERE user_id = :userId
+            """, nativeQuery = true)
+    List<Long> findAccountIdsOwnedBy(@Param("userId") Long userId);
 
     Page<Transaction> findByStatusOrderByCreatedAtDesc(TransactionStatus status, Pageable pageable);
 
@@ -59,4 +88,26 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     boolean existsActiveAccountWithCurrency(
             @Param("accountId") Long accountId,
             @Param("currency") String currency);
+
+    @Query(value = """
+            SELECT id,
+                   user_id AS userId,
+                   account_number AS accountNumber,
+                   currency,
+                   status
+            FROM account_service.accounts
+            WHERE account_number = :accountNumber
+            """, nativeQuery = true)
+    Optional<AccountRoutingView> findAccountForRouting(@Param("accountNumber") String accountNumber);
+
+    @Query(value = """
+            SELECT id,
+                   user_id AS userId,
+                   account_number AS accountNumber,
+                   currency,
+                   status
+            FROM account_service.accounts
+            WHERE id = :accountId
+            """, nativeQuery = true)
+    Optional<AccountRoutingView> findAccountForRoutingById(@Param("accountId") Long accountId);
 }

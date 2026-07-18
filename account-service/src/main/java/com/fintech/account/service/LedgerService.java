@@ -32,6 +32,7 @@ public class LedgerService {
 
     private static final String CASH_CLEARING = "SYSTEM:CASH_CLEARING";
     private static final String PAYMENT_CLEARING = "SYSTEM:PAYMENT_CLEARING";
+    private static final String OUTBOUND_CLEARING = "SYSTEM:OUTBOUND_CLEARING";
 
     private final LedgerTransactionRepository transactionRepository;
     private final LedgerEntryRepository entryRepository;
@@ -117,9 +118,13 @@ public class LedgerService {
     private List<LedgerEntry> buildEntries(
             TransactionEvent event, Account source, Account target, UUID transactionId, Instant postedAt) {
         return switch (event.getType()) {
-            case TRANSFER -> List.of(
-                    accountEntry(transactionId, source, LedgerDirection.DEBIT, event.getAmount(), postedAt),
-                    accountEntry(transactionId, target, LedgerDirection.CREDIT, event.getAmount(), postedAt));
+            case TRANSFER -> target == null
+                    ? List.of(
+                            accountEntry(transactionId, source, LedgerDirection.DEBIT, event.getAmount(), postedAt),
+                            systemEntry(transactionId, OUTBOUND_CLEARING, LedgerDirection.CREDIT, event, postedAt))
+                    : List.of(
+                            accountEntry(transactionId, source, LedgerDirection.DEBIT, event.getAmount(), postedAt),
+                            accountEntry(transactionId, target, LedgerDirection.CREDIT, event.getAmount(), postedAt));
             case DEPOSIT -> List.of(
                     systemEntry(transactionId, CASH_CLEARING, LedgerDirection.DEBIT, event, postedAt),
                     accountEntry(transactionId, target, LedgerDirection.CREDIT, event.getAmount(), postedAt));

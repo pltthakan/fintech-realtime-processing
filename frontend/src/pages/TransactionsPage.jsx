@@ -2,7 +2,13 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { transactionService, accountService } from '../services/api';
 import { StatusBadge, PipelineTracker, LoadingState } from '../components/ui';
-import { formatMoney, formatDate, TX_TYPE_CONFIG } from '../utils/helpers';
+import {
+  formatMoney,
+  formatDate,
+  TX_TYPE_CONFIG,
+  transactionAmountMeta,
+  transactionDisplayLabel,
+} from '../utils/helpers';
 import { RefreshCw, ChevronRight } from 'lucide-react';
 
 export default function TransactionsPage() {
@@ -101,6 +107,8 @@ export default function TransactionsPage() {
                       <div className="text-center py-16 text-slate-400">Bu hesapta henüz işlem yok</div>
                   ) : txns.map((tx, i) => {
                     const typeConf = TX_TYPE_CONFIG[tx.type] || {};
+                    const amountMeta = transactionAmountMeta(tx);
+                    const transactionLabel = transactionDisplayLabel(tx);
                     const isExpanded = expandedId === (tx.transactionId || tx.id);
 
                     return (
@@ -114,14 +122,13 @@ export default function TransactionsPage() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-semibold text-slate-800">
-                                {typeConf.label || tx.type}{tx.description ? ` — ${tx.description}` : ''}
+                                {transactionLabel}{tx.description ? ` — ${tx.description}` : ''}
                               </p>
                               <p className="text-xs text-slate-400 font-mono mt-0.5">{tx.referenceNumber}</p>
                             </div>
                             <div className="text-right mr-4">
-                              <p className={`text-[15px] font-bold font-mono
-                        ${tx.type === 'DEPOSIT' ? 'text-emerald-600' : 'text-slate-900'}`}>
-                                {tx.type === 'DEPOSIT' ? '+' : tx.type === 'WITHDRAWAL' || tx.type === 'PAYMENT' ? '-' : ''}
+                              <p className={`text-[15px] font-bold font-mono ${amountMeta.color}`}>
+                                {amountMeta.sign}
                                 {formatMoney(tx.amount, tx.currency)}
                               </p>
                               <p className="text-[11px] text-slate-400 mt-0.5">{formatDate(tx.createdAt)}</p>

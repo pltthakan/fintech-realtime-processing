@@ -26,6 +26,12 @@ public final class KafkaTopics {
     /** Kafka Connect → buradan okur → MongoDB'ye yazar */
     public static final String TRANSACTION_COMPLETED = "transaction-completed";
 
+    /** Account Service dış transfer tutarını rezerve ettikten sonra yayınlar. */
+    public static final String FUNDS_RESERVED = "funds-reserved";
+
+    /** Payment Rail Service EFT/FAST mutabakat sonucunu buraya yayınlar. */
+    public static final String TRANSFER_RAIL_RESULT = "transfer-rail-result";
+
     /** Hatalı işlemler için Dead Letter Queue */
     public static final String TRANSACTION_DLQ = "transaction-dlq";
 }

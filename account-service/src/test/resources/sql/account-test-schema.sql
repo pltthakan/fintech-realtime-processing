@@ -24,6 +24,7 @@ CREATE TABLE account_service.accounts (
     account_type    VARCHAR(20)   NOT NULL DEFAULT 'CHECKING',
     currency        VARCHAR(3)    NOT NULL DEFAULT 'TRY',
     balance         NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+    reserved_balance NUMERIC(15,2) NOT NULL DEFAULT 0.00,
     daily_limit     NUMERIC(15,2) NOT NULL DEFAULT 50000.00,
     daily_spent     NUMERIC(15,2) NOT NULL DEFAULT 0.00,
     daily_spent_date DATE,
@@ -33,8 +34,26 @@ CREATE TABLE account_service.accounts (
     CONSTRAINT chk_account_type CHECK (account_type IN ('CHECKING', 'SAVINGS', 'INVESTMENT')),
     CONSTRAINT chk_currency CHECK (currency IN ('TRY', 'USD', 'EUR', 'GBP')),
     CONSTRAINT chk_account_status CHECK (status IN ('ACTIVE', 'FROZEN', 'CLOSED')),
-    CONSTRAINT chk_balance_positive CHECK (balance >= 0)
+    CONSTRAINT chk_balance_positive CHECK (balance >= 0),
+    CONSTRAINT chk_reserved_balance CHECK (
+        reserved_balance >= 0 AND reserved_balance <= balance
+    )
 );
+
+CREATE TABLE account_service.fund_reservations (
+    transaction_id    UUID PRIMARY KEY,
+    account_id        BIGINT NOT NULL REFERENCES account_service.accounts(id),
+    amount            NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+    currency          VARCHAR(3) NOT NULL,
+    status            VARCHAR(20) NOT NULL,
+    daily_spent_date  DATE NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_fund_reservation_status CHECK (status IN ('RESERVED', 'SETTLED', 'RELEASED'))
+);
+
+CREATE INDEX idx_fund_reservations_account_status
+    ON account_service.fund_reservations (account_id, status);
 
 CREATE TABLE account_service.processed_events (
     consumer_name VARCHAR(100) NOT NULL,

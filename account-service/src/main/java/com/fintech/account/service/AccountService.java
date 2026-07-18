@@ -1,17 +1,24 @@
 package com.fintech.account.service;
 
 import com.fintech.account.entity.Account;
+import com.fintech.account.entity.FundReservation;
+import com.fintech.account.entity.FundReservationStatus;
+import com.fintech.account.dto.InternalBeneficiaryResponse;
 import com.fintech.account.repository.AccountRepository;
+import com.fintech.account.repository.FundReservationRepository;
+import com.fintech.account.repository.InternalBeneficiaryView;
 import com.fintech.common.enums.AccountStatus;
 import com.fintech.common.enums.AccountType;
 import com.fintech.common.enums.Currency;
 import com.fintech.common.enums.TransactionType;
+import com.fintech.common.enums.TransferRail;
 import com.fintech.common.event.TransactionEvent;
 import com.fintech.common.exception.AccountFrozenException;
 import com.fintech.common.exception.ForbiddenException;
 import com.fintech.common.exception.InsufficientBalanceException;
 import com.fintech.common.exception.ResourceNotFoundException;
 import com.fintech.common.exception.BusinessException;
+import com.fintech.common.util.IbanUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,6 +42,7 @@ public class AccountService {
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Europe/Istanbul");
 
     private final AccountRepository accountRepository;
+    private final FundReservationRepository fundReservationRepository;
     private final LedgerService ledgerService;
 
     /**
@@ -53,6 +61,7 @@ public class AccountService {
                 .accountType(accountType)
                 .currency(currency)
                 .balance(BigDecimal.ZERO)
+                .reservedBalance(BigDecimal.ZERO)
                 .dailyLimit(getDefaultDailyLimit(accountType))
                 .dailySpent(BigDecimal.ZERO)
                 .status(AccountStatus.ACTIVE)
@@ -66,9 +75,9 @@ public class AccountService {
     }
 
     private String generateAccountNumber() {
-        String base = "TR33" + "0006" + "10" + String.format("%016d",
+        String bban = "000610" + String.format("%016d",
                 Math.abs(UUID.randomUUID().getMostSignificantBits() % 10000000000000000L));
-        return base;
+        return IbanUtils.createTurkishIban(bban);
     }
 
     private String getDefaultAccountName(AccountType type, Currency currency) {
@@ -103,6 +112,79 @@ public class AccountService {
             case WITHDRAWAL -> processWithdrawal(event);
             case PAYMENT -> processPayment(event);
         }
+    }
+
+    /** Harici EFT/FAST transferi için parayı harcanabilir bakiyeden ayırır. */
+    public void reserveExternalTransfer(TransactionEvent event) {
+        validateEvent(event);
+        if (!isExternalTransfer(event)) {
+            throw new BusinessException("Yalnızca EFT/FAST transferleri rezerve edilebilir",
+                    "EXTERNAL_TRANSFER_REQUIRED");
+        }
+
+        UUID transactionId = UUID.fromString(event.getTransactionId());
+        if (fundReservationRepository.existsById(transactionId)) {
+            return;
+        }
+
+        Account source = accountRepository.findByIdWithLock(event.getSourceAccountId())
+                .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", event.getSourceAccountId()));
+        validateEventOwnership(source, event);
+        validateAccount(source);
+        validateCurrency(source, event);
+        validateBalance(source, event.getAmount());
+        applyDailyLimit(source, event.getAmount());
+
+        source.setReservedBalance(nonNull(source.getReservedBalance()).add(event.getAmount()));
+        accountRepository.save(source);
+        fundReservationRepository.save(FundReservation.builder()
+                .transactionId(transactionId)
+                .accountId(source.getId())
+                .amount(event.getAmount())
+                .currency(event.getCurrency())
+                .status(FundReservationStatus.RESERVED)
+                .dailySpentDate(source.getDailySpentDate())
+                .build());
+    }
+
+    /** Payment Rail sonucunu kesin bakiyeye ve ledger'a uygular veya rezervasyonu iade eder. */
+    public void completeExternalTransfer(TransactionEvent event) {
+        validateEvent(event);
+        UUID transactionId = UUID.fromString(event.getTransactionId());
+        FundReservation reservation = fundReservationRepository.findByTransactionIdWithLock(transactionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Fon rezervasyonu", "transactionId", transactionId));
+        if (reservation.getStatus() != FundReservationStatus.RESERVED) {
+            return;
+        }
+
+        Account source = accountRepository.findByIdWithLock(reservation.getAccountId())
+                .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", reservation.getAccountId()));
+        if (!Objects.equals(source.getId(), event.getSourceAccountId())
+                || reservation.getAmount().compareTo(event.getAmount()) != 0
+                || reservation.getCurrency() != event.getCurrency()) {
+            throw new BusinessException("Rail sonucu rezervasyon ile eşleşmiyor",
+                    "RESERVATION_RESULT_MISMATCH");
+        }
+
+        BigDecimal reserved = nonNull(source.getReservedBalance());
+        if (reserved.compareTo(event.getAmount()) < 0) {
+            throw new BusinessException("Rezerve bakiye tutarsız", "RESERVED_BALANCE_MISMATCH");
+        }
+
+        source.setReservedBalance(reserved.subtract(event.getAmount()));
+        if (event.getStatus() == com.fintech.common.enums.TransactionStatus.FAILED) {
+            releaseDailyLimit(source, reservation);
+            reservation.setStatus(FundReservationStatus.RELEASED);
+        } else {
+            validateBalanceForSettlement(source, event.getAmount());
+            source.setBalance(source.getBalance().subtract(event.getAmount()));
+            reservation.setStatus(FundReservationStatus.SETTLED);
+            ledgerService.post(event, source, null);
+            event.setStatus(com.fintech.common.enums.TransactionStatus.PROCESSED);
+        }
+
+        accountRepository.save(source);
+        fundReservationRepository.save(reservation);
     }
 
     private void processTransfer(TransactionEvent event) {
@@ -188,8 +270,14 @@ public class AccountService {
     }
 
     private void validateBalance(Account account, BigDecimal amount) {
-        if (account.getBalance().compareTo(amount) < 0) {
+        if (account.getAvailableBalance().compareTo(amount) < 0) {
             throw new InsufficientBalanceException(account.getId());
+        }
+    }
+
+    private void validateBalanceForSettlement(Account account, BigDecimal amount) {
+        if (account.getBalance().compareTo(amount) < 0) {
+            throw new BusinessException("Settlement için bakiye yetersiz", "SETTLEMENT_BALANCE_MISMATCH");
         }
     }
 
@@ -214,6 +302,17 @@ public class AccountService {
         account.setDailySpent(updated);
     }
 
+    private void releaseDailyLimit(Account account, FundReservation reservation) {
+        if (reservation.getDailySpentDate().equals(account.getDailySpentDate())) {
+            account.setDailySpent(nonNull(account.getDailySpent())
+                    .subtract(reservation.getAmount()).max(BigDecimal.ZERO));
+        }
+    }
+
+    private BigDecimal nonNull(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
     private void validateEvent(TransactionEvent event) {
         if (event == null || event.getTransactionId() == null || event.getTransactionId().isBlank()
                 || event.getType() == null || event.getCurrency() == null || event.getAmount() == null
@@ -223,9 +322,16 @@ public class AccountService {
 
         switch (event.getType()) {
             case TRANSFER -> {
-                if (event.getSourceAccountId() == null || event.getTargetAccountId() == null
+                if (isExternalTransfer(event)) {
+                    if (event.getSourceAccountId() == null || event.getTargetAccountId() != null
+                            || event.getBeneficiaryIban() == null || event.getBeneficiaryIban().isBlank()) {
+                        throw new BusinessException("EFT/FAST kaynak hesap ve alıcı IBAN gerektirir",
+                                "INVALID_EXTERNAL_TRANSFER");
+                    }
+                } else if (event.getSourceAccountId() == null || event.getTargetAccountId() == null
                         || Objects.equals(event.getSourceAccountId(), event.getTargetAccountId())) {
-                    throw new BusinessException("Transfer farklı kaynak ve hedef hesap gerektirir", "INVALID_TRANSFER_ACCOUNTS");
+                    throw new BusinessException("Transfer farklı kaynak ve hedef hesap gerektirir",
+                            "INVALID_TRANSFER_ACCOUNTS");
                 }
             }
             case PAYMENT, WITHDRAWAL -> {
@@ -296,5 +402,24 @@ public class AccountService {
         if (!administrator && !Objects.equals(account.getUserId(), authenticatedUserId)) {
             throw new ForbiddenException();
         }
+    }
+
+    public InternalBeneficiaryResponse resolveInternalBeneficiary(String iban) {
+        String normalized = IbanUtils.normalize(iban);
+        InternalBeneficiaryView beneficiary = accountRepository.resolveInternalBeneficiary(normalized)
+                .orElseThrow(() -> new ResourceNotFoundException("Alıcı hesabı", "iban", normalized));
+        return InternalBeneficiaryResponse.builder()
+                .accountId(beneficiary.getAccountId())
+                .userId(beneficiary.getUserId())
+                .iban(beneficiary.getIban())
+                .currency(beneficiary.getCurrency())
+                .status(beneficiary.getStatus())
+                .beneficiaryName(beneficiary.getBeneficiaryName())
+                .build();
+    }
+
+    private boolean isExternalTransfer(TransactionEvent event) {
+        return event.getType() == TransactionType.TRANSFER
+                && (event.getTransferRail() == TransferRail.EFT || event.getTransferRail() == TransferRail.FAST);
     }
 }

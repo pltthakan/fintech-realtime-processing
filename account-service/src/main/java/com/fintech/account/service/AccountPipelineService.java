@@ -42,4 +42,17 @@ public class AccountPipelineService {
             log.info("Duplicate transaction event güvenle atlandı - txId: {}", event.getTransactionId());
         }
     }
+
+    @KafkaListener(
+            topics = KafkaTopics.TRANSFER_RAIL_RESULT,
+            groupId = "account-rail-settlement-group",
+            concurrency = "3"
+    )
+    public void processRailResult(String message) {
+        TransactionEvent event = JsonUtil.fromJson(message, TransactionEvent.class);
+        boolean processed = accountEventProcessingService.processRailResult(event);
+        if (!processed) {
+            log.info("Duplicate rail sonucu güvenle atlandı - txId: {}", event.getTransactionId());
+        }
+    }
 }

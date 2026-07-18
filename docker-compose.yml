@@ -279,9 +279,30 @@ services:
         kafka-topics --create --if-not-exists \
           --bootstrap-server kafka:29092 \
           --topic transaction-dlq \
-          --partitions 3 \
+          --partitions 6 \
           --replication-factor 1 \
           --config retention.ms=7776000000
+
+        # Eski volume'larda 3 partition olan DLQ'yu kaynak topic'lerle eşitle.
+        kafka-topics --alter \
+          --bootstrap-server kafka:29092 \
+          --topic transaction-dlq \
+          --partitions 6 || true
+
+        # Dış transfer rezervasyon ve payment rail sonuç topic'leri
+        kafka-topics --create --if-not-exists \
+          --bootstrap-server kafka:29092 \
+          --topic funds-reserved \
+          --partitions 6 \
+          --replication-factor 1 \
+          --config retention.ms=604800000
+
+        kafka-topics --create --if-not-exists \
+          --bootstrap-server kafka:29092 \
+          --topic transfer-rail-result \
+          --partitions 6 \
+          --replication-factor 1 \
+          --config retention.ms=604800000
 
         echo ""
         echo "============================================"
@@ -508,6 +529,43 @@ services:
       - fintech-network
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:8082/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  payment-rail-service:
+    build:
+      context: .
+      dockerfile: payment-rail-service/Dockerfile
+    container_name: fintech-payment-rail-service
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      postgresql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      account-service:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      POSTGRES_HOST: postgresql
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      ACCOUNT_SERVICE_URL: http://account-service:8082
+      EUREKA_USER: ${EUREKA_USER:?Set EUREKA_USER in .env}
+      EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
+      EUREKA_HOST: eureka-server
+      EUREKA_PORT: 8761
+    networks:
+      - fintech-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8089/actuator/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

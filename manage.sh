@@ -101,7 +101,7 @@ show_urls() {
     echo ""
     echo -e "${YELLOW}Sadece Docker ağına açık servisler:${NC}"
     echo "  PostgreSQL, MongoDB, Redis, Kafka, Zookeeper, RabbitMQ AMQP"
-    echo "  User, Account, Transaction, Fraud, Notification ve Reporting servisleri"
+    echo "  User, Account, Transaction, Payment Rail, Fraud, Notification ve Reporting servisleri"
     echo "  Kimlik bilgileri: .env (Git tarafından yok sayılır)"
     echo ""
 }
@@ -163,6 +163,9 @@ migrate_database() {
 
     docker compose -f $COMPOSE_FILE exec -T postgresql sh -c \
         'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/06-add-financial-domain-hardening.sql'
+
+    docker compose -f $COMPOSE_FILE exec -T postgresql sh -c \
+        'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /docker-entrypoint-initdb.d/07-add-iban-payment-rails.sql'
 
     docker compose -f $COMPOSE_FILE exec -T mongodb sh -c \
         'mongosh --quiet --authenticationDatabase admin --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" "$MONGO_INITDB_DATABASE" --file /docker-entrypoint-initdb.d/02-align-completed-transaction-schema.js'

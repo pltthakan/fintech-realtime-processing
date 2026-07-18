@@ -1,0 +1,18 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://postgresql:5432/fintech_db?currentSchema=payment_rail_service
+  kafka:
+    bootstrap-servers: kafka:29092
+
+payment-rail:
+  account-service-url: http://account-service:8082
+
+eureka:
+  instance:
+    hostname: payment-rail-service
+    prefer-ip-address: true
+
+logging:
+  level:
+    root: INFO
+    com.fintech.paymentrail: INFO
