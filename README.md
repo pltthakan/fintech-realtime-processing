@@ -646,10 +646,14 @@ http://localhost:8080
 Fraud Detection Service stores expiring velocity counters, atomic daily
 transaction totals, and processed-event markers that prevent duplicate Kafka
 events from incrementing an account total twice.
+
+
 <img width="802" height="785" alt="Ekran Resmi 2026-07-18 12 36 11" src="https://github.com/user-attachments/assets/faf3d8ac-53f6-44e5-b937-2a6d78624fa2" />
 
 Spring Cloud Gateway uses Redis-backed token buckets to apply per-IP request
 limits. Token and timestamp keys expire automatically when request traffic stops.
+
+
 <img width="758" height="484" alt="Ekran Resmi 2026-07-18 15 45 51" src="https://github.com/user-attachments/assets/193531ce-3d0c-46b8-8a8b-1289bfe32e83" />
 
 
