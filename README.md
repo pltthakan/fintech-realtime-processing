@@ -29,6 +29,9 @@ flowchart TB
         GW --> AS[Account Service :8082]
         GW --> RS[Reporting Service :8086]
 
+        TS -->|internal account snapshot / ownership API| AS
+        AS -->|internal user snapshot API| US
+
         TS -->|transaction-raw| K[(Kafka)]
         K --> FS[Fraud Detection :8084]
         FS -->|transaction-validated| K
@@ -60,6 +63,20 @@ flowchart TB
 ```
 
 The pipeline resolves another platform user's IBAN as an atomic HAVALE. Transfers to an external bank reserve funds first; Payment Rail Service then simulates EFT/FAST execution idempotently, after which Account Service either settles the reservation into the ledger or releases it without losing money.
+
+## Service data ownership
+
+The local Docker environment uses one PostgreSQL instance with separate logical schemas, but domain services do not query or join another service's business tables at runtime:
+
+* `user-service` owns user and refresh-token data in `user_service`.
+* `account-service` owns accounts, reservations, ledger journals, inbox records, and account outbox events in `account_service`.
+* `transaction-service` owns transaction state, status history, and transaction outbox events in `transaction_service`.
+* Transaction Service resolves account ownership, status, currency, and IBAN routing through Account Service's internal REST API.
+* Account Service resolves beneficiary display names through User Service's internal REST API instead of joining `user_service.users`.
+* Internal endpoints are not routed by the API Gateway and the service ports are not published to the host by Docker Compose.
+* If an owning service is unavailable, callers fail explicitly with `503 SERVICE_UNAVAILABLE` rather than falling back to another service's tables.
+
+This removes the runtime cross-schema coupling from the User–Account–Transaction domain flow while preserving the current single-instance local deployment. The shared audit component is a documented transitional exception: Account and Transaction services currently persist centralized audit records in `audit_service`. Extracting that storage behind an Audit Service or an event consumer is listed under Future Improvements.
 
 ---
 
@@ -122,6 +139,7 @@ The pipeline resolves another platform user's IBAN as an atomic HAVALE. Transfer
 * MongoDB for completed transaction archive
 * Redis for cache, session, and distributed lock support
 * RabbitMQ for asynchronous notification delivery
+* Explicit service-owned data boundaries with internal REST lookups instead of cross-schema domain queries
 * Eureka-based service discovery
 * API Gateway routing with Spring Cloud Gateway
 * Immutable audit trail for account and transaction access/changes
@@ -201,6 +219,7 @@ Responsibilities:
 * Short-lived access JWT and rotating refresh-token families
 * HttpOnly refresh cookie, hashed token persistence, reuse detection, and logout revocation
 * Role-based access control
+* Provide an internal user snapshot API for service-to-service identity lookups
 
 Database schema:
 
@@ -234,6 +253,8 @@ Responsibilities:
 
 * Update account balances
 * Enforce ownership, account status, currency, balance, and daily-limit invariants
+* Own account lookup and beneficiary resolution APIs used by other services
+* Resolve beneficiary names through User Service without querying the user schema
 * Lock transfer accounts in deterministic order to prevent concurrent deadlocks
 * Atomically persist balances, consumer inbox claims, outbox events, and balanced ledger journals
 * Store account/transaction audit records in `audit_service.audit_logs`
@@ -278,6 +299,8 @@ Responsibilities:
 
 * Receive transaction requests
 * Require an idempotency key and apply type-specific source/target account rules
+* Resolve account snapshots and user-owned account IDs through Account Service
+* Query only transaction-owned tables when building transaction histories
 * Reject same-account transfers, inactive/currency-mismatched accounts, and user-created deposits
 * Enforce a locked state machine so duplicate events are no-ops and invalid status regressions fail
 * Publish transaction events to Kafka
@@ -479,6 +502,8 @@ Schemas:
 * `fraud_service`
 * `payment_rail_service`
 
+These schemas share one PostgreSQL instance in the local Docker topology, but they represent logical ownership boundaries. User, Account, and Transaction domain reads no longer cross those boundaries with SQL joins or native queries; service-owned information is requested through internal APIs. Separate PostgreSQL instances can therefore be introduced later without rewriting these domain queries.
+
 Example tables:
 
 * `users`
@@ -666,6 +691,7 @@ limits. Token and timestamp keys expire automatically when request traffic stops
 # Future Improvements
 
 * Distributed transaction management with Saga Pattern
+* Extract the shared `audit_service` schema behind a dedicated Audit Service or Kafka consumer
 * Extend Consumer Inbox idempotency to notification and reporting side effects
 * Operational DLQ replay tooling
 * Centralized logging with ELK or Grafana
@@ -678,4 +704,4 @@ limits. Token and timestamp keys expire automatically when request traffic stops
 
 # Example Resume Description
 
-Developed a real-time fintech transaction platform with Spring Boot microservices, Kafka, PostgreSQL, Redis, MongoDB, RabbitMQ, and Docker. Implemented transactional outbox/consumer idempotency, secure refresh-token rotation, IBAN-based HAVALE/EFT/FAST orchestration with reserve-settle-release semantics, financial invariants and daily limits, an immutable double-entry ledger, retry/DLQ handling, and Testcontainers end-to-end tests executed in GitHub Actions CI.
+Developed a real-time fintech transaction platform with Spring Boot microservices, Kafka, PostgreSQL, Redis, MongoDB, RabbitMQ, and Docker. Enforced service-owned domain boundaries by replacing cross-schema User–Account–Transaction queries with internal REST APIs. Implemented transactional outbox/consumer idempotency, secure refresh-token rotation, IBAN-based HAVALE/EFT/FAST orchestration with reserve-settle-release semantics, financial invariants and daily limits, an immutable double-entry ledger, retry/DLQ handling, and Testcontainers end-to-end tests executed in GitHub Actions CI.

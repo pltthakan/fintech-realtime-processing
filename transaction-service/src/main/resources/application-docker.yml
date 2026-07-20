@@ -5,6 +5,10 @@ spring:
   kafka:
     bootstrap-servers: kafka:29092
 
+clients:
+  account-service:
+    base-url: http://account-service:8082
+
 eureka:
   instance:
     hostname: transaction-service

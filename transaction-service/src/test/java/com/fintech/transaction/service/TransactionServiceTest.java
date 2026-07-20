@@ -1,8 +1,10 @@
 package com.fintech.transaction.service;
 
+import com.fintech.common.dto.internal.AccountSnapshot;
 import com.fintech.common.dto.request.TransactionRequest;
 import com.fintech.common.dto.response.TransactionResponse;
 import com.fintech.common.enums.Currency;
+import com.fintech.common.enums.AccountStatus;
 import com.fintech.common.enums.TransactionDirection;
 import com.fintech.common.enums.TransactionStatus;
 import com.fintech.common.enums.TransactionType;
@@ -12,7 +14,7 @@ import com.fintech.common.event.TransactionEvent;
 import com.fintech.common.exception.BusinessException;
 import com.fintech.common.util.JsonUtil;
 import com.fintech.transaction.entity.Transaction;
-import com.fintech.transaction.repository.AccountRoutingView;
+import com.fintech.transaction.client.AccountDirectoryClient;
 import com.fintech.transaction.repository.TransactionRepository;
 import com.fintech.transaction.repository.TransactionStatusHistoryRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +29,7 @@ import org.springframework.data.domain.PageRequest;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,12 +46,15 @@ class TransactionServiceTest {
     private TransactionStatusHistoryRepository statusHistoryRepository;
     @Mock
     private OutboxService outboxService;
+    @Mock
+    private AccountDirectoryClient accountDirectoryClient;
 
     private TransactionService service;
 
     @BeforeEach
     void setUp() {
-        service = new TransactionService(transactionRepository, statusHistoryRepository, outboxService);
+        service = new TransactionService(
+                transactionRepository, statusHistoryRepository, outboxService, accountDirectoryClient);
     }
 
     @Test
@@ -63,11 +69,8 @@ class TransactionServiceTest {
                 .idempotencyKey("client-request-1")
                 .build();
 
-        when(transactionRepository.existsAccountOwnedBy(10L, 7L)).thenReturn(true);
-        when(transactionRepository.existsAccount(10L)).thenReturn(true);
-        when(transactionRepository.existsAccount(20L)).thenReturn(true);
-        when(transactionRepository.existsActiveAccountWithCurrency(10L, "TRY")).thenReturn(true);
-        when(transactionRepository.existsActiveAccountWithCurrency(20L, "TRY")).thenReturn(true);
+        when(accountDirectoryClient.getAccount(10L)).thenReturn(account(10L, 7L, "TR100006100000000000000001"));
+        when(accountDirectoryClient.getAccount(20L)).thenReturn(account(20L, 8L, "TR100006100000000000000002"));
         when(transactionRepository.findByIdempotencyKey("client-request-1")).thenReturn(Optional.empty());
         when(transactionRepository.save(any(Transaction.class))).thenAnswer(invocation -> {
             Transaction transaction = invocation.getArgument(0);
@@ -129,14 +132,9 @@ class TransactionServiceTest {
                 .type(TransactionType.TRANSFER)
                 .idempotencyKey("external-fast-1")
                 .build();
-        AccountRoutingView source = mock(AccountRoutingView.class);
-
-        when(source.getAccountNumber()).thenReturn("TR220006100519786457841325");
-        when(transactionRepository.existsAccountOwnedBy(10L, 7L)).thenReturn(true);
-        when(transactionRepository.existsAccount(10L)).thenReturn(true);
-        when(transactionRepository.existsActiveAccountWithCurrency(10L, "TRY")).thenReturn(true);
-        when(transactionRepository.findAccountForRoutingById(10L)).thenReturn(Optional.of(source));
-        when(transactionRepository.findAccountForRouting(beneficiaryIban)).thenReturn(Optional.empty());
+        when(accountDirectoryClient.getAccount(10L))
+                .thenReturn(account(10L, 7L, "TR220006100519786457841325"));
+        when(accountDirectoryClient.findAccountByIban(beneficiaryIban)).thenReturn(Optional.empty());
         when(transactionRepository.findByIdempotencyKey("external-fast-1")).thenReturn(Optional.empty());
         when(transactionRepository.save(any(Transaction.class))).thenAnswer(invocation -> {
             Transaction transaction = invocation.getArgument(0);
@@ -230,8 +228,10 @@ class TransactionServiceTest {
         PageRequest pageRequest = PageRequest.of(0, 20);
         PageImpl<Transaction> page = new PageImpl<>(List.of(transfer), pageRequest, 1);
 
-        when(transactionRepository.existsAccountOwnedBy(1L, 3L)).thenReturn(true);
-        when(transactionRepository.existsAccountOwnedBy(23L, 22L)).thenReturn(true);
+        when(accountDirectoryClient.getAccount(1L))
+                .thenReturn(account(1L, 3L, "TR100006100000000000000001"));
+        when(accountDirectoryClient.getAccount(23L))
+                .thenReturn(account(23L, 22L, "TR100006100000000000000023"));
         when(transactionRepository.findByAccountIdOrderByCreatedAtDesc(1L, pageRequest)).thenReturn(page);
         when(transactionRepository.findByAccountIdOrderByCreatedAtDesc(23L, pageRequest)).thenReturn(page);
 
@@ -252,8 +252,8 @@ class TransactionServiceTest {
         Transaction transfer = completedTransfer(1L, 23L, 3L);
         PageRequest pageRequest = PageRequest.of(0, 5);
 
-        when(transactionRepository.findAccountIdsOwnedBy(22L)).thenReturn(List.of(23L));
-        when(transactionRepository.findByParticipantUserId(22L, pageRequest))
+        when(accountDirectoryClient.getAccountIdsByUser(22L)).thenReturn(List.of(23L));
+        when(transactionRepository.findByParticipantAccountIds(Set.of(23L), pageRequest))
                 .thenReturn(new PageImpl<>(List.of(transfer), pageRequest, 1));
 
         TransactionResponse recipientView = service
@@ -269,7 +269,7 @@ class TransactionServiceTest {
         Transaction transfer = completedTransfer(1L, 23L, 3L);
 
         when(transactionRepository.findById(transfer.getId())).thenReturn(Optional.of(transfer));
-        when(transactionRepository.findAccountIdsOwnedBy(22L)).thenReturn(List.of(23L));
+        when(accountDirectoryClient.getAccountIdsByUser(22L)).thenReturn(List.of(23L));
 
         TransactionResponse response = service.getTransactionById(transfer.getId(), 22L, "USER");
 
@@ -318,6 +318,16 @@ class TransactionServiceTest {
                 .status(TransactionStatus.COMPLETED)
                 .referenceNumber("FTK-TEST-5000")
                 .idempotencyKey("test-" + UUID.randomUUID())
+                .build();
+    }
+
+    private AccountSnapshot account(Long accountId, Long userId, String accountNumber) {
+        return AccountSnapshot.builder()
+                .accountId(accountId)
+                .userId(userId)
+                .accountNumber(accountNumber)
+                .currency(Currency.TRY)
+                .status(AccountStatus.ACTIVE)
                 .build();
     }
 }

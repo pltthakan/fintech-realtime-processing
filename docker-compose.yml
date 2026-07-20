@@ -424,6 +424,8 @@ services:
       dockerfile: transaction-service/Dockerfile
     container_name: fintech-transaction-service
     depends_on:
+      account-service:
+        condition: service_healthy
       eureka-server:
         condition: service_healthy
       postgresql:
@@ -447,6 +449,7 @@ services:
       EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
       EUREKA_HOST: eureka-server
       EUREKA_PORT: 8761
+      ACCOUNT_SERVICE_URL: http://account-service:8082
     networks:
       - fintech-network
     healthcheck:
@@ -502,6 +505,8 @@ services:
       dockerfile: account-service/Dockerfile
     container_name: fintech-account-service
     depends_on:
+      user-service:
+        condition: service_healthy
       eureka-server:
         condition: service_healthy
       postgresql:
@@ -525,6 +530,7 @@ services:
       EUREKA_PASSWORD: ${EUREKA_PASSWORD:?Set EUREKA_PASSWORD in .env}
       EUREKA_HOST: eureka-server
       EUREKA_PORT: 8761
+      USER_SERVICE_URL: http://user-service:8081
     networks:
       - fintech-network
     healthcheck:

@@ -1,12 +1,14 @@
 package com.fintech.account.service;
 
+import com.fintech.account.client.UserDirectoryClient;
 import com.fintech.account.entity.Account;
 import com.fintech.account.entity.FundReservation;
 import com.fintech.account.entity.FundReservationStatus;
 import com.fintech.account.dto.InternalBeneficiaryResponse;
 import com.fintech.account.repository.AccountRepository;
 import com.fintech.account.repository.FundReservationRepository;
-import com.fintech.account.repository.InternalBeneficiaryView;
+import com.fintech.common.dto.internal.AccountSnapshot;
+import com.fintech.common.dto.internal.UserSnapshot;
 import com.fintech.common.enums.AccountStatus;
 import com.fintech.common.enums.AccountType;
 import com.fintech.common.enums.Currency;
@@ -44,6 +46,7 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final FundReservationRepository fundReservationRepository;
     private final LedgerService ledgerService;
+    private final UserDirectoryClient userDirectoryClient;
 
     /**
      * Yeni hesap oluştur.
@@ -406,15 +409,45 @@ public class AccountService {
 
     public InternalBeneficiaryResponse resolveInternalBeneficiary(String iban) {
         String normalized = IbanUtils.normalize(iban);
-        InternalBeneficiaryView beneficiary = accountRepository.resolveInternalBeneficiary(normalized)
+        Account account = accountRepository.findByAccountNumber(normalized)
                 .orElseThrow(() -> new ResourceNotFoundException("Alıcı hesabı", "iban", normalized));
+        UserSnapshot owner = userDirectoryClient.getUser(account.getUserId());
         return InternalBeneficiaryResponse.builder()
-                .accountId(beneficiary.getAccountId())
-                .userId(beneficiary.getUserId())
-                .iban(beneficiary.getIban())
-                .currency(beneficiary.getCurrency())
-                .status(beneficiary.getStatus())
-                .beneficiaryName(beneficiary.getBeneficiaryName())
+                .accountId(account.getId())
+                .userId(account.getUserId())
+                .iban(account.getAccountNumber())
+                .currency(account.getCurrency().name())
+                .status(account.getStatus().name())
+                .beneficiaryName(owner.getDisplayName())
+                .build();
+    }
+
+    public AccountSnapshot getInternalAccount(Long accountId) {
+        Account account = accountRepository.findById(accountId)
+                .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", accountId));
+        return toSnapshot(account);
+    }
+
+    public AccountSnapshot getInternalAccountByIban(String iban) {
+        String normalized = IbanUtils.normalize(iban);
+        Account account = accountRepository.findByAccountNumber(normalized)
+                .orElseThrow(() -> new ResourceNotFoundException("Hesap", "iban", normalized));
+        return toSnapshot(account);
+    }
+
+    public List<Long> getInternalAccountIdsByUser(Long userId) {
+        return accountRepository.findByUserId(userId).stream()
+                .map(Account::getId)
+                .toList();
+    }
+
+    private AccountSnapshot toSnapshot(Account account) {
+        return AccountSnapshot.builder()
+                .accountId(account.getId())
+                .userId(account.getUserId())
+                .accountNumber(account.getAccountNumber())
+                .currency(account.getCurrency())
+                .status(account.getStatus())
                 .build();
     }
 

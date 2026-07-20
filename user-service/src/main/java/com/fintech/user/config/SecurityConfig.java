@@ -29,6 +29,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/auth/**").permitAll()
                 // Actuator açık
                 .requestMatchers("/actuator/**").permitAll()
+                // Gateway bu yolu yayınlamaz; servisler Docker ağı üzerinden doğrudan çağırır.
+                .requestMatchers("/api/v1/internal/**").permitAll()
                 // User endpoint'leri - Gateway JWT filtresinden geçtiği için
                 // burada ek güvenlik katmanı gerekmez (gateway hallediyor)
                 .requestMatchers("/api/v1/users/**").permitAll()

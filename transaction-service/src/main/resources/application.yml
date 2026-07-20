@@ -43,6 +43,10 @@ spring:
       password: ${REDIS_PASSWORD}
       database: 4
 
+clients:
+  account-service:
+    base-url: ${ACCOUNT_SERVICE_URL:http://localhost:8082}
+
 # ============================================
 # EUREKA CLIENT
 # ============================================
