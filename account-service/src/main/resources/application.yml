@@ -33,6 +33,10 @@ spring:
       password: ${REDIS_PASSWORD}
       database: 3
 
+clients:
+  user-service:
+    base-url: ${USER_SERVICE_URL:http://localhost:8081}
+
 eureka:
   instance:
     prefer-ip-address: true

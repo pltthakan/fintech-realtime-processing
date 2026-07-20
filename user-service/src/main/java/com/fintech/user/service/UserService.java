@@ -1,5 +1,6 @@
 package com.fintech.user.service;
 
+import com.fintech.common.dto.internal.UserSnapshot;
 import com.fintech.common.exception.ResourceNotFoundException;
 import com.fintech.user.dto.AuthDto;
 import com.fintech.user.entity.User;
@@ -65,6 +66,20 @@ public class UserService {
      */
     public boolean existsById(Long id) {
         return userRepository.existsById(id);
+    }
+
+    public UserSnapshot getInternalUserSnapshot(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Kullanıcı", "id", id));
+        String fullName = String.join(" ",
+                        user.getFirstName() == null ? "" : user.getFirstName().trim(),
+                        user.getLastName() == null ? "" : user.getLastName().trim())
+                .trim();
+        return UserSnapshot.builder()
+                .userId(user.getId())
+                .username(user.getUsername())
+                .displayName(fullName.isBlank() ? user.getUsername() : fullName)
+                .build();
     }
 
     private AuthDto.UserInfo toUserInfo(User user) {

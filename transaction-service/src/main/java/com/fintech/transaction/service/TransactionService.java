@@ -1,8 +1,10 @@
 package com.fintech.transaction.service;
 
+import com.fintech.common.dto.internal.AccountSnapshot;
 import com.fintech.common.dto.request.TransactionRequest;
 import com.fintech.common.dto.response.TransactionResponse;
 import com.fintech.common.enums.Currency;
+import com.fintech.common.enums.AccountStatus;
 import com.fintech.common.enums.TransactionDirection;
 import com.fintech.common.enums.TransferRail;
 import com.fintech.common.enums.TransactionType;
@@ -19,8 +21,8 @@ import com.fintech.common.util.ReferenceGenerator;
 import com.fintech.common.util.TransferRoutingPolicy;
 import com.fintech.transaction.entity.Transaction;
 import com.fintech.transaction.entity.TransactionStatusHistory;
+import com.fintech.transaction.client.AccountDirectoryClient;
 import com.fintech.transaction.repository.TransactionRepository;
-import com.fintech.transaction.repository.AccountRoutingView;
 import com.fintech.transaction.repository.TransactionStatusHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,6 +52,7 @@ public class TransactionService {
     private final TransactionRepository transactionRepository;
     private final TransactionStatusHistoryRepository statusHistoryRepository;
     private final OutboxService outboxService;
+    private final AccountDirectoryClient accountDirectoryClient;
 
     /**
      * Yeni işlem oluştur ve Kafka pipeline'ına gönder.
@@ -168,8 +171,11 @@ public class TransactionService {
 
     public Page<TransactionResponse> getTransactionsByAccount(
             Long accountId, Long authenticatedUserId, String role, Pageable pageable) {
-        if (!isAdministrator(role) && !transactionRepository.existsAccountOwnedBy(accountId, authenticatedUserId)) {
-            throw new ForbiddenException();
+        if (!isAdministrator(role)) {
+            AccountSnapshot account = accountDirectoryClient.getAccount(accountId);
+            if (!Objects.equals(account.getUserId(), authenticatedUserId)) {
+                throw new ForbiddenException();
+            }
         }
 
         return transactionRepository.findByAccountIdOrderByCreatedAtDesc(accountId, pageable)
@@ -182,8 +188,11 @@ public class TransactionService {
             throw new ForbiddenException();
         }
 
-        Set<Long> ownedAccountIds = Set.copyOf(transactionRepository.findAccountIdsOwnedBy(userId));
-        return transactionRepository.findByParticipantUserId(userId, pageable)
+        Set<Long> ownedAccountIds = Set.copyOf(accountDirectoryClient.getAccountIdsByUser(userId));
+        if (ownedAccountIds.isEmpty()) {
+            return Page.empty(pageable);
+        }
+        return transactionRepository.findByParticipantAccountIds(ownedAccountIds, pageable)
                 .map(transaction -> toResponse(transaction, directionForAccounts(transaction, ownedAccountIds)));
     }
 
@@ -218,8 +227,9 @@ public class TransactionService {
                         && Objects.equals(request.getSourceAccountId(), request.getTargetAccountId())) {
                     throw badRequest("Kaynak ve hedef hesap aynı olamaz", "SAME_ACCOUNT_TRANSFER");
                 }
-                validateOwnedActiveAccount(request.getSourceAccountId(), userId, request);
-                return resolveTransferDestination(request, userId);
+                AccountSnapshot source = validateOwnedActiveAccount(
+                        request.getSourceAccountId(), userId, request);
+                return resolveTransferDestination(request, userId, source);
             }
             case PAYMENT, WITHDRAWAL -> {
                 requireAccount(request.getSourceAccountId(), "Kaynak hesap zorunludur");
@@ -241,7 +251,8 @@ public class TransactionService {
         return ResolvedDestination.none(request.getTargetAccountId());
     }
 
-    private ResolvedDestination resolveTransferDestination(TransactionRequest request, Long userId) {
+    private ResolvedDestination resolveTransferDestination(
+            TransactionRequest request, Long userId, AccountSnapshot source) {
         boolean hasTargetId = request.getTargetAccountId() != null;
         boolean hasIban = request.getBeneficiaryIban() != null && !request.getBeneficiaryIban().isBlank();
         if (hasTargetId == hasIban) {
@@ -255,30 +266,28 @@ public class TransactionService {
             if (Objects.equals(request.getSourceAccountId(), request.getTargetAccountId())) {
                 throw badRequest("Kaynak ve hedef hesap aynı olamaz", "SAME_ACCOUNT_TRANSFER");
             }
-            validateActiveAccount(request.getTargetAccountId(), request);
-            TransferRail rail = transactionRepository.existsAccountOwnedBy(request.getTargetAccountId(), userId)
+            AccountSnapshot target = validateActiveAccount(request.getTargetAccountId(), request);
+            TransferRail rail = Objects.equals(target.getUserId(), userId)
                     ? TransferRail.INTERNAL : TransferRail.HAVALE;
             return new ResolvedDestination(request.getTargetAccountId(), null, null, null, rail);
         }
 
         String iban = IbanUtils.normalize(request.getBeneficiaryIban());
-        AccountRoutingView source = transactionRepository.findAccountForRoutingById(request.getSourceAccountId())
-                .orElseThrow(() -> new ResourceNotFoundException("Hesap", "id", request.getSourceAccountId()));
         if (source.getAccountNumber().equals(iban)) {
             throw badRequest("Kaynak IBAN alıcı IBAN ile aynı olamaz", "SAME_ACCOUNT_TRANSFER");
         }
 
-        AccountRoutingView internalTarget = transactionRepository.findAccountForRouting(iban).orElse(null);
+        AccountSnapshot internalTarget = accountDirectoryClient.findAccountByIban(iban).orElse(null);
         if (internalTarget != null) {
-            if (!"ACTIVE".equals(internalTarget.getStatus())
-                    || !request.getCurrency().name().equals(internalTarget.getCurrency())) {
+            if (internalTarget.getStatus() != AccountStatus.ACTIVE
+                    || request.getCurrency() != internalTarget.getCurrency()) {
                 throw badRequest("Alıcı hesabı aktif olmalı ve para birimi eşleşmelidir",
                         "BENEFICIARY_ACCOUNT_MISMATCH");
             }
             TransferRail rail = Objects.equals(internalTarget.getUserId(), userId)
                     ? TransferRail.INTERNAL : TransferRail.HAVALE;
             return new ResolvedDestination(
-                    internalTarget.getId(), iban, trimToNull(request.getBeneficiaryName()),
+                    internalTarget.getAccountId(), iban, trimToNull(request.getBeneficiaryName()),
                     IbanUtils.bankCode(iban), rail);
         }
 
@@ -313,18 +322,24 @@ public class TransactionService {
         return value.trim();
     }
 
-    private void validateOwnedActiveAccount(Long accountId, Long userId, TransactionRequest request) {
-        if (!transactionRepository.existsAccountOwnedBy(accountId, userId)) {
+    private AccountSnapshot validateOwnedActiveAccount(
+            Long accountId, Long userId, TransactionRequest request) {
+        AccountSnapshot account = accountDirectoryClient.getAccount(accountId);
+        if (!Objects.equals(account.getUserId(), userId)) {
             throw new ForbiddenException();
         }
-        validateActiveAccount(accountId, request);
+        validateActiveAccount(account, request);
+        return account;
     }
 
-    private void validateActiveAccount(Long accountId, TransactionRequest request) {
-        if (!transactionRepository.existsAccount(accountId)) {
-            throw new ResourceNotFoundException("Hesap", "id", accountId);
-        }
-        if (!transactionRepository.existsActiveAccountWithCurrency(accountId, request.getCurrency().name())) {
+    private AccountSnapshot validateActiveAccount(Long accountId, TransactionRequest request) {
+        AccountSnapshot account = accountDirectoryClient.getAccount(accountId);
+        validateActiveAccount(account, request);
+        return account;
+    }
+
+    private void validateActiveAccount(AccountSnapshot account, TransactionRequest request) {
+        if (account.getStatus() != AccountStatus.ACTIVE || account.getCurrency() != request.getCurrency()) {
             throw badRequest("Hesap aktif olmalı ve işlem para birimiyle eşleşmelidir",
                     "ACCOUNT_CURRENCY_OR_STATUS_MISMATCH");
         }
@@ -381,7 +396,7 @@ public class TransactionService {
         }
 
         Set<Long> ownedAccountIds = Set.copyOf(
-                transactionRepository.findAccountIdsOwnedBy(authenticatedUserId));
+                accountDirectoryClient.getAccountIdsByUser(authenticatedUserId));
         TransactionDirection direction = directionForAccounts(transaction, ownedAccountIds);
         if (direction == null && !Objects.equals(transaction.getUserId(), authenticatedUserId)) {
             throw new ForbiddenException();
