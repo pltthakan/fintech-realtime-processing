@@ -126,6 +126,10 @@ This removes the runtime cross-schema coupling from the User–Account–Transac
 
 </details>
 
+## Event-Driven FinTech Architecture
+<img width="841" height="471" alt="Ekran Resmi 2026-09-21 00 08 45" src="https://github.com/user-attachments/assets/b86120a3-1acb-40d9-910f-3459b8d42e8b" />
+
+
 ---
 
 # Features
